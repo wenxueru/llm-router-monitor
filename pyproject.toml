@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "sglang-router-monitor"
+name = "router-monitor"
 version = "0.1.0"
 description = "Multi-Router monitoring dashboard with automatic detection and SGLang worker maintenance"
 readme = "README.md"
@@ -17,13 +17,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["ruff>=0.17,<1"]
+dev = ["build>=1,<2", "ruff>=0.17,<1"]
+
+[project.urls]
+Repository = "https://github.com/wenxueru/router-monitor"
+Issues = "https://github.com/wenxueru/router-monitor/issues"
 
 [project.scripts]
+rmon = "router_monitor.cli:main"
+router-monitor = "router_monitor.cli:main"
 sglang-router-monitor = "router_monitor.cli:main"
 
 [tool.setuptools]
 packages = ["router_monitor"]
+include-package-data = false
 
 [tool.setuptools.package-data]
 router_monitor = ["templates/*.html"]

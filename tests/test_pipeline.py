@@ -12,7 +12,7 @@ from fastapi.testclient import TestClient
 
 from router_monitor.collectors import RouterCollector
 from router_monitor.config import MonitorConfig
-from router_monitor.dashboard import TerminalRenderer, WebDashboard
+from router_monitor.dashboard import WebDashboard, render_terminal
 from router_monitor.http import HttpClient
 from router_monitor.maintenance import AutoUnregister, KeepaliveWarmer
 from router_monitor.state import SnapshotStore
@@ -111,7 +111,7 @@ class PipelineTests(unittest.TestCase):
                 first = collector.collect()
                 self.assertIsNone(first["rps"])
                 with patch("builtins.print") as output:
-                    TerminalRenderer(config).render(first)
+                    render_terminal(first, config)
                 self.assertIn("test", output.call_args.args[0])
                 counters.update(cached=110, prompt=220, requests=20)
                 second = collector.collect()
@@ -129,7 +129,7 @@ class PipelineTests(unittest.TestCase):
                 detail = next(iter(second["details"].values()))
                 self.assertEqual(detail["running"], 5)
                 self.assertEqual(detail["hit_ranks"], [70, 90])
-                store = SnapshotStore(config.interval)
+                store = SnapshotStore()
                 store.publish(first)
                 store.publish(second)
                 with TestClient(WebDashboard(config, store).create_app()) as client:
@@ -257,8 +257,8 @@ class PipelineTests(unittest.TestCase):
             reconcile(120)
             self.assertEqual(len(probes), 4)
             reconcile(121)
-            self.assertCountEqual(probes, ["gone", "responding", "slow", "error", "responding", "slow", "error"])
-            self.assertEqual(len(mutations), 2)
+            self.assertCountEqual(probes, ["gone", "responding", "slow", "error"] * 2)
+            self.assertEqual(len(mutations), 4)
         finally:
             cleanup.close()
 

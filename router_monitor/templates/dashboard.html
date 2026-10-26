@@ -248,7 +248,8 @@
         color: var(--muted);
         font-size: 11px;
       }
-      .settings-menu select {
+      .settings-menu select,
+      .settings-menu input {
         width: 100%;
         min-width: 0;
       }
@@ -294,11 +295,6 @@
         letter-spacing: 0;
         font-weight: 400;
         color: var(--muted);
-      }
-      .card-note {
-        font-size: 10px;
-        color: var(--muted);
-        min-height: 15px;
       }
       .panel {
         padding: 19px 20px;
@@ -594,19 +590,28 @@
             </summary>
             <div class="settings-menu">
               <label
-                ><span data-i18n="Window">Window</span
-                ><select
+                ><span data-i18n="Window (minutes)">Window (minutes)</span
+                ><input
                   id="window"
-                  aria-label="History window"
-                  data-i18n-aria-label="History window"
-                >
-                  <option value="1" data-i18n="1 min">1 min</option>
-                  <option value="5" data-i18n="5 min">5 min</option>
-                  <option value="10" data-i18n="10 min">10 min</option>
-                  <option value="30" data-i18n="30 min">30 min</option>
-                  <option value="60" data-i18n="60 min">60 min</option>
-                </select></label
-              >
+                  type="number"
+                  min="0.1"
+                  step="any"
+                  required
+                  aria-label="Window (minutes)"
+                  data-i18n-aria-label="Window (minutes)"
+              /></label>
+              <label
+                ><span data-i18n="Refresh interval (seconds)"
+                  >Refresh interval (seconds)</span
+                ><input
+                  id="interval"
+                  type="number"
+                  min="0.1"
+                  step="any"
+                  required
+                  aria-label="Refresh interval (seconds)"
+                  data-i18n-aria-label="Refresh interval (seconds)"
+              /></label>
               <label
                 ><span data-i18n="Language">Language</span
                 ><select
@@ -616,20 +621,6 @@
                 >
                   <option value="en">English</option>
                   <option value="zh-CN">简体中文</option>
-                </select></label
-              >
-              <label
-                ><span data-i18n="Refresh interval">Refresh interval</span
-                ><select
-                  id="interval"
-                  aria-label="Refresh interval"
-                  data-i18n-aria-label="Refresh interval"
-                >
-                  <option value="1000" data-i18n="1 s">1 s</option>
-                  <option value="2000" data-i18n="2 s">2 s</option>
-                  <option value="5000" data-i18n="5 s">5 s</option>
-                  <option value="10000" data-i18n="10 s">10 s</option>
-                  <option value="30000" data-i18n="30 s">30 s</option>
                 </select></label
               >
               <label
@@ -818,9 +809,6 @@
       ></section>
       <div class="footer">
         <span id="history-count" data-i18n="No history">No history</span>
-        <span data-i18n="Dashed lines: gaps ≤30 s"
-          >Dashed lines: gaps ≤30 s</span
-        >
       </div>
     </main>
     <!-- ECHARTS_VENDOR_START -->
@@ -1129,19 +1117,8 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           Dark: "深色模式",
           "Waiting for router endpoint": "等待路由地址",
           Connecting: "连接中",
-          Window: "时间窗口",
-          "History window": "历史时间窗口",
-          "Refresh interval": "刷新间隔",
-          "1 min": "1 分钟",
-          "5 min": "5 分钟",
-          "10 min": "10 分钟",
-          "30 min": "30 分钟",
-          "60 min": "60 分钟",
-          "1 s": "1 秒",
-          "2 s": "2 秒",
-          "5 s": "5 秒",
-          "10 s": "10 秒",
-          "30 s": "30 秒",
+          "Window (minutes)": "窗口（分钟）",
+          "Refresh interval (seconds)": "刷新（秒）",
           "Fleet metrics": "集群指标",
           "Worker fleet": "Worker 集群",
           "Search workers": "搜索 worker",
@@ -1226,7 +1203,6 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           "No data": "暂无数据",
           Waiting: "等待数据",
           "No history": "暂无历史",
-          "Dashed lines: gaps ≤30 s": "虚线：连接 30 秒内的短缺口",
           "Reset zoom": "重置缩放",
           "No matches": "无匹配项",
           "No workers": "暂无 worker",
@@ -1391,16 +1367,6 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           status();
         }
 
-        function setOption(id, value) {
-          const select = $(id);
-          if (
-            ![...select.options].some((o) => Number(o.value) === Number(value))
-          ) {
-            select.add(new Option(String(value), value));
-          }
-          select.value = value;
-        }
-
         function badge(text, kind = "") {
           return `<span class="pill ${kind}">${escapeHTML(text)}</span>`;
         }
@@ -1492,7 +1458,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           $("cards").innerHTML = defs
             .map(
               ([label, value, unit, note]) =>
-                `<div class="card"><div class="label">${escapeHTML(t(label))}</div><div class="value">${value} <small>${unit}</small></div><div class="card-note">${escapeHTML(note)}</div></div>`,
+                `<div class="card" title="${escapeHTML(note)}"><div class="label">${escapeHTML(t(label))}</div><div class="value">${value} <small>${unit}</small></div></div>`,
             )
             .join("");
           const b = s.balance || {};
@@ -1853,30 +1819,35 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             title: "Running requests",
             note: "Requests",
             key: "running",
+            integer: true,
           },
           {
             id: "queue",
             title: "Queued requests",
             note: "Requests",
             key: "waiting",
+            integer: true,
           },
           {
             id: "ttft",
             title: "Time to first token",
             note: "ms · window mean",
             key: "ttft_mean_ms",
+            latency: true,
           },
           {
             id: "itl",
             title: "Inter-token latency",
             note: "ms · window mean",
             key: "itl_ms",
+            latency: true,
           },
           {
             id: "prefill",
             title: "Queued prefill work",
             note: "Uncached tokens",
             key: "prefill_tokens",
+            integer: true,
           },
           {
             id: "retract",
@@ -1895,47 +1866,45 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             title: "KV usage",
             note: "% · worst DP",
             key: "kv_pct",
-            max: 100,
           },
           {
             id: "swa",
             title: "SWA usage",
             note: "% · worst DP",
             key: "swa_pct",
-            max: 100,
           },
           {
             id: "health",
             title: "Unhealthy workers",
             note: "Workers",
             key: "unhealthy_workers",
+            integer: true,
           },
           {
             id: "success",
             title: "Request success rate",
             note: "% · worst rank",
             key: "success_pct",
-            max: 100,
           },
           {
             id: "health-unknown",
             title: "Engine health unknown",
             note: "Workers",
             key: "health_missing_workers",
+            integer: true,
           },
           {
             id: "cache",
             title: "Token-weighted cache hit",
             note: "60 s token-weighted",
+            unit: "%",
             key: "hit_pct",
-            max: 100,
           },
           {
             id: "batch-cache",
             title: "Batch cache hit",
             note: "% · worst DP",
             key: "batch_hit_min_pct",
-            max: 100,
           },
         ];
         function renderTrendLayout() {
@@ -1954,7 +1923,10 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
               .join("");
           for (const def of chartDefs) {
             $("title-" + def.id).textContent = t(def.title);
-            $("note-" + def.id).textContent = t(def.note);
+            $("note-" + def.id).textContent = t(
+              def.unit ?? def.note.split(" · ")[0],
+            );
+            $("title-" + def.id).title = t(def.note);
             $("plot-" + def.id).setAttribute("aria-label", t(def.title));
           }
         }
@@ -1969,7 +1941,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           if (!state.history.length) return [];
           const end = state.history[state.history.length - 1].at;
           return state.history.filter(
-            (p) => p.at >= end - Number($("window").value) * 60,
+            (p) => p.at >= end - preferences.window * 60,
           );
         }
 
@@ -1978,10 +1950,10 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             id: name,
             name: modelName(name),
             color: colorFor(name),
-            ...lineData(samples, name, def.key),
+            ...lineData(samples, name, def),
           }));
         }
-        function lineData(samples, model, key) {
+        function lineData(samples, model, def) {
           const data = [],
             gaps = [];
           let lastObserved = null;
@@ -1998,7 +1970,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
               }
             }
             const observedModel = samples[index].by_model?.[model];
-            const value = observedModel?.[key];
+            const value = observedModel?.[def.key];
             const point = [at, Number.isFinite(value) ? value : null];
             data.push(point);
             if (!observedModel || observedModel.metrics_workers === 0) {
@@ -2009,7 +1981,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             if (
               lastObserved &&
               index > lastObserved.index + 1 &&
-              at - lastObserved.point[0] <= 30000
+              (def.latency || at - lastObserved.point[0] <= 30000)
             ) {
               gaps.push([{ coord: lastObserved.point }, { coord: point }]);
             }
@@ -2017,12 +1989,70 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           }
           return { data, gaps };
         }
+        function valueAxisBounds(def) {
+          const padding = ({ min, max }) =>
+            (max - min || Math.abs(max) || 1) * 0.1;
+          return {
+            min: (range) => {
+              const value = Math.max(0, range.min - padding(range));
+              return def.integer ? Math.floor(value) : value;
+            },
+            max: (range) => {
+              const value = Math.max(1, range.max + padding(range));
+              if (def.key.endsWith("_pct")) return Math.min(100, value);
+              return def.integer ? Math.ceil(value) : value;
+            },
+            minInterval: def.integer ? 1 : 0,
+          };
+        }
+        function chartUnit(def, series) {
+          const peak = series.reduce(
+            (maximum, item) =>
+              item.data.reduce(
+                (value, [, sample]) => Math.max(value, sample ?? 0),
+                maximum,
+              ),
+            0,
+          );
+          const base = t(def.unit ?? def.note.split(" · ")[0]);
+          const scales = def.latency
+            ? [
+                [3600000, "h"],
+                [60000, "min"],
+                [1000, "s"],
+              ]
+            : def.key.endsWith("_pct")
+              ? []
+              : [
+                  [1e9, "B"],
+                  [1e6, "M"],
+                  [1e3, "K"],
+                ];
+          const [divisor, suffix] = scales.find(([size]) => peak >= size) ?? [
+            1,
+            "",
+          ];
+          return {
+            label:
+              def.latency && suffix
+                ? suffix
+                : [suffix, base].filter(Boolean).join(" "),
+            format: (value) =>
+              number(value == null ? null : value / divisor, 2),
+          };
+        }
         function renderChart(def, samples, names, palette) {
           const series = chartSeries(def, samples, names);
+          const unit = chartUnit(def, series);
+          $("note-" + def.id).textContent = unit.label;
           const hasData = series.some((item) =>
             item.data.some(([, value]) => value !== null),
           );
           const base = chartBase(palette);
+          const end =
+            (state.history.at(-1)?.at ??
+              state.snapshot?.collected_at ??
+              Date.now() / 1000) * 1000;
           updateChart("plot-" + def.id, {
             ...base,
             aria: {
@@ -2054,6 +2084,11 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             },
             xAxis: {
               type: "time",
+              min: Math.max(
+                end - preferences.window * 60_000,
+                (state.history[0]?.at ?? end / 1000) * 1000,
+              ),
+              max: end,
               show: hasData,
               splitNumber: 3,
               axisLine: { lineStyle: { color: palette["--line"] } },
@@ -2068,13 +2103,13 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             yAxis: {
               type: "value",
               show: hasData,
-              min: 0,
-              max: def.max,
+              scale: true,
+              ...valueAxisBounds(def),
               splitNumber: 3,
               axisLabel: {
                 color: palette["--muted"],
                 fontSize: 10,
-                formatter: compact,
+                formatter: unit.format,
               },
               splitLine: {
                 lineStyle: { color: palette["--line"], type: "dashed" },
@@ -2101,12 +2136,12 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
                       '">●</span> ' +
                       escapeHTML(param.seriesName) +
                       ": <b>" +
-                      number(param.value[1], 2) +
+                      unit.format(param.value[1]) +
                       "</b>",
                   )
                   .join("<br>") +
                 "<br><span>" +
-                escapeHTML(t(def.note)) +
+                escapeHTML(unit.label) +
                 "</span>",
             },
             dataZoom: [
@@ -2165,9 +2200,9 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
                   tooltip: { show: false },
                   lineStyle: {
                     color,
-                    type: "dashed",
+                    type: def.latency ? "solid" : "dashed",
                     width: 2,
-                    opacity: 0.65,
+                    opacity: def.latency ? 1 : 0.65,
                   },
                   data: item.gaps,
                 },
@@ -2206,7 +2241,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             count: number(samples.length),
           });
           $("history-note").textContent = t("Last {minutes} min", {
-            minutes: $("window").value,
+            minutes: preferences.window,
           });
         }
 
@@ -2231,9 +2266,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           try {
             const count = Math.max(
               1,
-              Math.ceil(
-                (Number($("window").value) * 60) / CONFIG.collectionSeconds,
-              ),
+              Math.ceil((preferences.window * 60) / CONFIG.collectionSeconds),
             );
             const [snapshotResult, historyResult] = await Promise.allSettled([
               readJSON("/data"),
@@ -2257,7 +2290,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           } finally {
             state.busy = false;
             status();
-            state.pollTimer = setTimeout(poll, Number($("interval").value));
+            state.pollTimer = setTimeout(poll, preferences.interval * 1000);
           }
         }
 
@@ -2315,17 +2348,33 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             };
           });
           $("reset-zoom").onclick = resetZoom;
-          $("interval").onchange = () => poll();
-          $("window").onchange = () => {
-            resetZoom();
-            renderCharts();
-            return poll();
-          };
+          for (const [id, fallback] of [
+            ["window", CONFIG.historyWindowMinutes],
+            ["interval", CONFIG.intervalMs / 1000],
+          ]) {
+            const input = $(id);
+            try {
+              input.value =
+                localStorage.getItem("router-monitor-" + id) ?? fallback;
+            } catch {
+              input.value = fallback;
+            }
+            if (!input.checkValidity()) input.value = fallback;
+            preferences[id] = Number(input.value);
+            input.oninput = input.onchange = () => {
+              if (!input.checkValidity()) return;
+              preferences[id] = Number(input.value);
+              savePreference("router-monitor-" + id, input.value);
+              if (id === "window") {
+                resetZoom();
+                renderCharts();
+              }
+              return poll();
+            };
+          }
         }
         function initialize() {
           bindControls();
-          setOption("window", CONFIG.historyWindowMinutes);
-          setOption("interval", CONFIG.intervalMs);
           setInterval(status, 1000);
           applyTheme();
           applyLanguage();

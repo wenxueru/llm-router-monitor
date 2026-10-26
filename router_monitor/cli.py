@@ -8,7 +8,7 @@ import typer
 
 from .collectors import RouterCollector
 from .config import MonitorConfig, RouterType
-from .dashboard import TerminalRenderer, WebDashboard
+from .dashboard import WebDashboard, render_terminal
 from .maintenance import KeepaliveWarmer
 from .state import SnapshotStore
 
@@ -24,8 +24,7 @@ class MonitorApplication:
     def __init__(self, config: MonitorConfig):
         self.config = config
         self.collector = RouterCollector(config)
-        self.store = SnapshotStore(config.interval)
-        self.terminal = TerminalRenderer(config)
+        self.store = SnapshotStore()
         self.warmer = KeepaliveWarmer(config, self.store) if config.keepalive else None
         self._stop = threading.Event()
 
@@ -34,7 +33,7 @@ class MonitorApplication:
             try:
                 snapshot = self.collector.collect()
                 self.store.publish(snapshot)
-                self.terminal.render(snapshot)
+                render_terminal(snapshot, self.config)
             except Exception:
                 logger.exception("Monitor collection cycle failed")
             self._stop.wait(self.config.interval)
@@ -65,9 +64,11 @@ class MonitorApplication:
 
 @app.command()
 def monitor(
-    host: Annotated[
-        str, typer.Option(envvar="MASTER_HOST", help="Router host.", rich_help_panel="Connection")
-    ] = "127.0.0.1",
+    url: Annotated[
+        str | None,
+        typer.Argument(help="Router base URL; overrides --router-url and ROUTER_URL."),
+    ] = None,
+    host: Annotated[str, typer.Option(envvar="MASTER_HOST", help="Router host.", rich_help_panel="Connection")] = "127.0.0.1",
     port: Annotated[int, typer.Option(min=1, max=65535, help="Router API port.", rich_help_panel="Connection")] = 2730,
     prom_port: Annotated[
         int, typer.Option(envvar="PROM_PORT", min=1, max=65535, help="Prometheus port.", rich_help_panel="Connection")
@@ -85,18 +86,14 @@ def monitor(
     ] = "",
     admin_url: Annotated[
         str,
-        typer.Option(
-            envvar="ROUTER_ADMIN_URL", help="Separate admin base URL (e.g. Envoy).", rich_help_panel="Connection"
-        ),
+        typer.Option(envvar="ROUTER_ADMIN_URL", help="Separate admin base URL (e.g. Envoy).", rich_help_panel="Connection"),
     ] = "",
     router_type: Annotated[
         RouterType, typer.Option(help="Router dialect; auto detects exposed interfaces.", rich_help_panel="Connection")
     ] = RouterType.auto,
     worker: Annotated[
         list[str] | None,
-        typer.Option(
-            "--worker", help="Worker base URL; repeat for proxies without discovery.", rich_help_panel="Connection"
-        ),
+        typer.Option("--worker", help="Worker base URL; repeat for proxies without discovery.", rich_help_panel="Connection"),
     ] = None,
     api_key: Annotated[
         str,
@@ -108,9 +105,7 @@ def monitor(
     ] = "",
     worker_api_key: Annotated[
         str,
-        typer.Option(
-            envvar="WORKER_API_KEY", help="Separate Bearer token for worker endpoints.", rich_help_panel="Connection"
-        ),
+        typer.Option(envvar="WORKER_API_KEY", help="Separate Bearer token for worker endpoints.", rich_help_panel="Connection"),
     ] = "",
     interval: Annotated[
         float,
@@ -118,15 +113,13 @@ def monitor(
     ] = 2,
     history_window: Annotated[
         float, typer.Option(min=1, help="Initial history window in minutes.", rich_help_panel="Dashboard")
-    ] = 5,
+    ] = 1440,
     web_port: Annotated[
         int, typer.Option(min=0, max=65535, help="Dashboard port; 0 for terminal only.", rich_help_panel="Dashboard")
     ] = 8899,
     keepalive: Annotated[
         bool,
-        typer.Option(
-            help="Send inference requests to idle SGLang-registered workers.", rich_help_panel="Worker maintenance"
-        ),
+        typer.Option(help="Send inference requests to idle SGLang-registered workers.", rich_help_panel="Worker maintenance"),
     ] = False,
     auto_unregister: Annotated[
         bool,
@@ -145,9 +138,7 @@ def monitor(
     ] = 1800,
     keepalive_model: Annotated[
         str,
-        typer.Option(
-            envvar="KEEPALIVE_MODEL", help="Limit keepalive to one model.", rich_help_panel="Keepalive tuning"
-        ),
+        typer.Option(envvar="KEEPALIVE_MODEL", help="Limit keepalive to one model.", rich_help_panel="Keepalive tuning"),
     ] = "",
     keepalive_interval: Annotated[
         float,
@@ -197,7 +188,7 @@ def monitor(
         host=host,
         port=port,
         prom_port=prom_port,
-        endpoint=router_url,
+        endpoint=url or router_url,
         metrics_endpoint=metrics_url,
         admin_url=admin_url,
         router_type=router_type,

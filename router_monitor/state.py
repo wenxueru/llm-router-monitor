@@ -1,17 +1,15 @@
 """Thread-safe current snapshot and history shared by all views."""
 
-import itertools
 import threading
 import time
-from collections import deque
 
 
 class SnapshotStore:
-    def __init__(self, interval: float):
+    def __init__(self):
         self._lock = threading.Lock()
         self._snapshot: dict = {}
         self._published_at = None
-        self._history: deque = deque(maxlen=max(1, round(60 * 60 / interval)))
+        self._history: list[dict] = []
 
     def publish(self, snapshot: dict) -> None:
         history_item = {
@@ -34,5 +32,4 @@ class SnapshotStore:
         with self._lock:
             if limit <= 0:
                 return list(self._history)
-            start = max(0, len(self._history) - limit)
-            return list(itertools.islice(self._history, start, None))
+            return self._history[-limit:]

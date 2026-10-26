@@ -77,7 +77,7 @@ class Element {
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
   removeAttribute(key) { delete this.attrs[key]; }
-  add(option) { this.options.push(option); }
+  checkValidity() { const n = Number(this.value); return this.value !== '' && Number.isFinite(n) && n >= Number(this.attrs.min ?? '-Infinity') && n <= Number(this.attrs.max ?? 'Infinity'); }
   replaceChildren(...options) { this.options = options; this.value = options[0]?.value ?? ''; }
 }
 const staticElements = input.elements.map(item => new Element(item.attrs, item.options));
@@ -174,7 +174,7 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
   const $ = id => elements.get(id);
   const workerButton = url => allElements().find(element => element.dataset.worker === encodeURIComponent(url));
   const tick = async () => {
-    const [id, timer] = [...timers].find(([, timer]) => timer.delay === Number($('interval').value));
+    const [id, timer] = [...timers].find(([, timer]) => timer.delay === Number($('interval').value) * 1000);
     timers.delete(id);
     await timer.callback();
   };
@@ -332,10 +332,32 @@ assert.match($('worker-rows').innerHTML, /未提供 rank 健康状态/);
 assert.equal($('status').textContent, 'Live');
 assert.ok($('settings'));
 for (const removed of ['pause', 'refresh', 'download', 'models', 'age']) assert.equal($(removed), undefined);
-$('interval').value = '5000'; await $('interval').trigger('change');
-assert.ok([...timers.values()].some(timer => timer.delay === 5000));
-$('window').value = '10'; await $('window').trigger('change');
-assert.equal($('history-note').textContent, 'Last 10 min');
+$('interval').value = '3.5'; await $('interval').trigger('change');
+assert.ok([...timers.values()].some(timer => timer.delay === 3500));
+assert.equal(stored['router-monitor-interval'], '3.5');
+$('interval').value = ''; await $('interval').trigger('input');
+assert.ok([...timers.values()].some(timer => timer.delay === 3500));
+$('interval').value = '3.5';
+
+$('window').value = '120.5'; await $('window').trigger('input');
+for (const chart of renderedCharts.values()) {
+  const yAxis = chart.getOption().yAxis?.[0];
+  assert.equal(yAxis.scale, true);
+  assert.equal(yAxis.min({min: 0, max: 1}), 0);
+  assert.ok(yAxis.max({min: 0, max: 0}) >= 1);
+  const axis = chart.getOption().xAxis?.[0];
+  if (axis?.type === 'time') {
+    assert.ok(axis.max - axis.min <= 120.5 * 60000);
+    assert.equal(axis.min, fixture.history[0].at * 1000);
+  }
+}
+assert.equal($('history-note').textContent, 'Last 120.5 min');
+const percentageAxis = renderedCharts.get('plot-success').getOption().yAxis[0];
+assert.equal(percentageAxis.max({min: 99, max: 100}), 100);
+const countAxis = renderedCharts.get('plot-running').getOption().yAxis[0];
+assert.equal(countAxis.minInterval, 1);
+assert.ok(Number.isInteger(countAxis.max({min: 0, max: 3})));
+
 assert.equal($('history-count').textContent, '2 samples');
 const plots = [...elements].filter(([id]) => id.startsWith('plot-'));
 for (const [, plot] of plots) {
@@ -401,12 +423,36 @@ assert.equal(load.getOption().dataZoom[0].end, 100);
 assert.equal(load.getOption().legend[0].selected.a, false);
 """)
 
+    def test_chart_units_follow_data_magnitude(self):
+        self.evaluate(r"""
+for (const [value, label, formatted] of [
+  [500, 'ms', '500'], [15000, 's', '15'],
+  [120000, 'min', '2'], [7200000, 'h', '2'],
+]) {
+  for (const sample of fixture.history)
+    for (const model of Object.values(sample.by_model)) model.ttft_mean_ms = value;
+  await tick();
+  const option = renderedCharts.get('plot-ttft').getOption();
+  assert.equal($('note-ttft').textContent, label);
+  assert.equal(option.yAxis[0].axisLabel.formatter(value), formatted);
+  assert.match(option.tooltip[0].formatter([
+    {axisValue: 1792900800000, value: [1792900800000, value], seriesName: 'a', color: 'blue'}
+  ]), new RegExp('<b>' + formatted + '</b>'));
+}
+for (const sample of fixture.history)
+  for (const model of Object.values(sample.by_model)) model.tps = 2500000;
+await tick();
+assert.equal($('note-throughput').textContent, 'M token/s');
+assert.equal(renderedCharts.get('plot-throughput').getOption().yAxis[0].axisLabel.formatter(2500000), '2.5');
+assert.equal($('note-success').textContent, '%');
+""")
+
     def test_short_metric_gaps_have_dashed_links_but_outages_do_not(self):
         self.evaluate(r"""
 const cases = [
   {times: [0, 2, 4], values: [1, null, 3], links: 1},
   {times: [0, 6, 12, 18, 24, 30], values: [1, null, null, null, null, 3], links: 1},
-  {times: [0, 8, 16, 24, 32], values: [1, null, null, null, 3], links: 0},
+  {times: [0, 8, 16, 24, 32], values: [1, null, null, null, 3], links: 0, latencyLinks: 1},
   {times: [0, 20, 22], values: [1, null, 3], links: 0},
   {times: [0, 2, 4], values: [1, null, 3], outage: true, links: 0},
   {times: [0, 2, 4], values: [1, null, 3], absent: true, links: 0},
@@ -417,12 +463,18 @@ for (const test of cases) {
     by_model: test.absent && index === 1 ? {} : {a: {
       ...fixture.snapshot.by_model_stats.a,
       running: test.values[index],
+      ttft_mean_ms: test.values[index],
       metrics_workers: test.outage && index === 1 ? 0 : 1,
     }},
   }));
   await tick();
   const series = renderedCharts.get('plot-running').getOption().series[0];
   assert.equal(series.markLine.data.length, test.links);
+  const latency = renderedCharts.get('plot-ttft').getOption().series[0];
+  assert.equal(latency.markLine.data.length, test.latencyLinks ?? test.links);
+  assert.equal(latency.markLine.lineStyle.type, 'solid');
+  assert.equal(latency.data[1][1], null);
+
   assert.equal(series.data[1][1], null);
   assert.equal(series.connectNulls, false);
   if (test.links) {

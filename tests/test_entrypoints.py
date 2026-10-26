@@ -38,6 +38,7 @@ class ConfigTests(unittest.TestCase):
             default = self.invoke()
             self.assertEqual(default.host, "127.0.0.1")
             self.assertEqual(default.router_type, RouterType.auto)
+            self.assertEqual(default.history_window, 1440)
             self.assertFalse(default.keepalive)
             self.assertEqual(default.keepalive_max_tokens, 64)
             self.assertFalse(default.auto_unregister)
@@ -54,6 +55,18 @@ class ConfigTests(unittest.TestCase):
                 with self.subTest(flags=flags):
                     config = self.invoke(flags)
                     self.assertEqual((config.keepalive, config.auto_unregister), expected)
+
+    def test_router_url_precedence(self):
+        cases = [
+            ([], "http://environment:4000"),
+            (["--router-url", "http://option:4000"], "http://option:4000"),
+            (["https://router.example:8443/"], "https://router.example:8443"),
+            (["http://positional:8000", "--router-url", "http://option:4000"], "http://positional:8000"),
+        ]
+        with patch.dict(os.environ, {"ROUTER_URL": "http://environment:4000"}, clear=True):
+            for args, expected in cases:
+                with self.subTest(args=args):
+                    self.assertEqual(self.invoke(args).router_url, expected)
 
     def test_router_connection_options_and_auto_default(self):
         with patch.dict(os.environ, {"ROUTER_API_KEY": "router-secret", "WORKER_API_KEY": "worker-secret"}, clear=True):
@@ -125,7 +138,7 @@ class ConfigTests(unittest.TestCase):
 class DashboardTests(unittest.TestCase):
     def test_single_file_dashboard_and_configuration(self):
         config = MonitorConfig(host="192.0.2.1", interval=5, history_window=10)
-        app = WebDashboard(config, SnapshotStore(config.interval)).create_app()
+        app = WebDashboard(config, SnapshotStore()).create_app()
         with TestClient(app) as client:
             html = client.get("/")
             self.assertEqual(html.status_code, 200)
@@ -149,8 +162,8 @@ class DashboardTests(unittest.TestCase):
             template.parent.mkdir()
             template.write_text("first INTERVAL_MS HISTORY_LABEL")
             with patch("router_monitor.dashboard.files", return_value=root):
-                app = WebDashboard(config, SnapshotStore(config.interval)).create_app()
+                app = WebDashboard(config, SnapshotStore()).create_app()
             with TestClient(app) as client:
-                self.assertEqual(client.get("/").text, "first 2000 5 min")
+                self.assertEqual(client.get("/").text, "first 2000 1440 min")
                 template.write_text("second COLLECTION_S WIN_DEFAULT_MIN")
-                self.assertEqual(client.get("/").text, "second 2.0 5")
+                self.assertEqual(client.get("/").text, "second 2.0 1440")

@@ -61,65 +61,57 @@ class WebDashboard:
         uvicorn.Server(config).run()
 
 
-class TerminalRenderer:
-    def __init__(self, config: MonitorConfig):
-        self.config = config
+def _cache_hit(detail: dict) -> str:
+    """Show per-rank hit rates for DP attention, otherwise the aggregate rate."""
+    if "hit_ranks" in detail:
+        return "/".join(f"{value:.0f}%" if value is not None else "-" for value in detail["hit_ranks"])
+    return f"{detail['hit_pct']:.0f}%" if "hit_pct" in detail else "-"
 
-    @staticmethod
-    def _hit(detail: dict) -> str:
-        """Show per-rank hit rates for DP attention, otherwise the aggregate rate."""
-        if "hit_ranks" in detail:
-            return "/".join(f"{value:.0f}%" if value is not None else "-" for value in detail["hit_ranks"])
-        return f"{detail['hit_pct']:.0f}%" if "hit_pct" in detail else "-"
 
-    def render(self, snapshot: dict) -> None:
-        width = 88
-        lines = [
-            f"\033[1;36m{'═' * width}\033[0m",
-            f"\033[1;36m  Router Monitor  {snapshot['ts']}\033[0m",
-            f"\033[1;36m  {snapshot['router_url']}\033[0m",
-            f"\033[1;36m{'═' * width}\033[0m",
-        ]
-        if not snapshot["prom_ok"]:
-            lines.append("\n\033[1;31m  Prometheus unreachable\033[0m")
-        else:
-            rps = snapshot["rps"]
-            traffic = f"  \033[2m{rps:.1f} req/s\033[0m" if rps is not None and rps > 0.05 else ""
-            active = snapshot["total_active"] if snapshot["total_active"] is not None else "-"
-            lines.append(f"\n\033[1mActive: \033[1;33m{active}\033[0m{traffic}")
+def render_terminal(snapshot: dict, config: MonitorConfig) -> None:
+    width = 88
+    lines = [
+        f"\033[1;36m{'═' * width}\033[0m",
+        f"\033[1;36m  Router Monitor  {snapshot['ts']}\033[0m",
+        f"\033[1;36m  {snapshot['router_url']}\033[0m",
+        f"\033[1;36m{'═' * width}\033[0m",
+    ]
+    if not snapshot["prom_ok"]:
+        lines.append("\n\033[1;31m  Prometheus unreachable\033[0m")
+    else:
+        rps = snapshot["rps"]
+        traffic = f"  \033[2m{rps:.1f} req/s\033[0m" if rps is not None and rps > 0.05 else ""
+        active = snapshot["total_active"] if snapshot["total_active"] is not None else "-"
+        lines.append(f"\n\033[1mActive: \033[1;33m{active}\033[0m{traffic}")
 
-            for model, workers in sorted(snapshot["by_model"].items()):
-                lines.extend(
-                    (
-                        f"\n\x1b[1;33m  {model}  \x1b[2m({len(workers)} workers)\x1b[0m",
-                        f"  \x1b[1m{'Worker':<22} {'Run':>5} {'Wait':>4}  {'KV%':>4}  {'TPS':>5}  {'TTFT':>7}  {'Accept':>6}  {'Hit':>4}\x1b[0m",
-                        "  " + "─" * width,
-                    )
-                )
-                for worker in workers:
-                    detail = snapshot["details"].get(worker, {})
-                    running = f"{detail['running']:>5.1f}" if "running" in detail else "    -"
-                    waiting = f"{detail['waiting']:>4.0f}" if "waiting" in detail else "   -"
-                    kv_pct = f"{detail['kv_pct']:>3.0f}%" if "kv_pct" in detail else "   -"
-                    hit = self._hit(detail)
-                    tps = f"{detail['gen_tps']:>5.0f}" if "gen_tps" in detail else "     -"
-                    ttft = f"{detail['ttft_p50_ms']:>5.0f}ms" if "ttft_p50_ms" in detail else "      -"
-                    accept_len = f"{detail['spec_accept_len']:>6.2f}" if "spec_accept_len" in detail else "     -"
-                    worker_name = worker.replace("http://", "")
-                    lines.append(
-                        f"  {worker_name:<22}  {running} {waiting}  {kv_pct}  {tps}  {ttft}  {accept_len}  {hit:>4}"
-                    )
+        for model, workers in sorted(snapshot["by_model"].items()):
+            lines.extend((
+                f"\n\x1b[1;33m  {model}  \x1b[2m({len(workers)} workers)\x1b[0m",
+                f"  \x1b[1m{'Worker':<22} {'Run':>5} {'Wait':>4}  {'KV%':>4}  {'TPS':>5}  {'TTFT':>7}  {'Accept':>6}  {'Hit':>4}\x1b[0m",
+                "  " + "─" * width,
+            ))
+            for worker in workers:
+                detail = snapshot["details"].get(worker, {})
+                running = f"{detail['running']:>5.1f}" if "running" in detail else "    -"
+                waiting = f"{detail['waiting']:>4.0f}" if "waiting" in detail else "   -"
+                kv_pct = f"{detail['kv_pct']:>3.0f}%" if "kv_pct" in detail else "   -"
+                hit = _cache_hit(detail)
+                tps = f"{detail['gen_tps']:>5.0f}" if "gen_tps" in detail else "     -"
+                ttft = f"{detail['ttft_p50_ms']:>5.0f}ms" if "ttft_p50_ms" in detail else "      -"
+                accept_len = f"{detail['spec_accept_len']:>6.2f}" if "spec_accept_len" in detail else "     -"
+                worker_name = worker.replace("http://", "")
+                lines.append(f"  {worker_name:<22}  {running} {waiting}  {kv_pct}  {tps}  {ttft}  {accept_len}  {hit:>4}")
 
-            aged = sorted(
-                ((label, count) for label, count in snapshot["age"].items() if count),
-                key=lambda item: float(item[0].split("~")[0]),
-            )
-            if aged:
-                lines.append("\n\033[1mIn-flight age:\033[0m")
-                for label, count in aged:
-                    lines.append(f"  {label:<14} {count:>4} req")
+        aged = sorted(
+            ((label, count) for label, count in snapshot["age"].items() if count),
+            key=lambda item: float(item[0].split("~")[0]),
+        )
+        if aged:
+            lines.append("\n\033[1mIn-flight age:\033[0m")
+            for label, count in aged:
+                lines.append(f"  {label:<14} {count:>4} req")
 
-        web_url = f"  |  Web → http://0.0.0.0:{self.config.web_port}" if self.config.web_port else ""
-        lines.append(f"\n\033[2mRefresh {self.config.interval}s  |  Ctrl+C to exit{web_url}\033[0m")
-        print("\033[H\033[2J", end="")
-        print("\n".join(lines))
+    web_url = f"  |  Web → http://0.0.0.0:{config.web_port}" if config.web_port else ""
+    lines.append(f"\n\033[2mRefresh {config.interval}s  |  Ctrl+C to exit{web_url}\033[0m")
+    print("\033[H\033[2J", end="")
+    print("\n".join(lines))
