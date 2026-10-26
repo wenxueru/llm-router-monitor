@@ -1,6 +1,6 @@
 <p align="center"><img src="docs/images/logo.svg" alt="Router Monitor" width="72"></p>
 
-# Router Monitor
+# LLM Router Monitor
 
 [English](README.md) | 简体中文
 
@@ -14,14 +14,14 @@
 
 ## 安装与运行
 
-需要 Python 3.10+。在仓库根目录执行：
+需要 Python 3.10+：
 
 ```bash
-python -m pip install .
+python -m pip install llm-router-monitor
 rmon http://127.0.0.1:4000
 ```
 
-访问 [localhost:8899](http://localhost:8899/)。`router-monitor` 与 `rmon` 等价，完整参数见 `rmon --help`。
+访问 [localhost:8899](http://localhost:8899/)。`llm-router-monitor` 与 `rmon` 等价，完整参数见 `rmon --help`。
 
 | 参数 | 用途 |
 | --- | --- |
@@ -119,4 +119,4 @@ ruff format --check router_monitor tests
 python -m build
 ```
 
-构建产物位于 `dist/`，使用 `python -m pip install dist/router_monitor-0.1.0-py3-none-any.whl` 安装 wheel。
+构建产物位于 `dist/`，使用 `python -m pip install dist/llm_router_monitor-0.0.1-py3-none-any.whl` 安装 wheel。

@@ -1,8 +1,8 @@
-<p align="center"><img src="https://raw.githubusercontent.com/wenxueru/router-monitor/main/docs/images/logo.svg" alt="Router Monitor" width="72"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/logo.svg" alt="Router Monitor" width="72"></p>
 
-# Router Monitor
+# LLM Router Monitor
 
-English | [简体中文](https://github.com/wenxueru/router-monitor/blob/main/README.zh-CN.md)
+English | [简体中文](https://github.com/wenxueru/llm-router-monitor/blob/main/README.zh-CN.md)
 
 Monitor LLM Routers and inference workers from one dashboard.
 
@@ -10,18 +10,18 @@ Monitor LLM Routers and inference workers from one dashboard.
 - 15 per-model trend charts, rank details, and health reasons.
 - English/Chinese, light/dark themes, and a self-contained HTML interface.
 
-![Dashboard — anonymized data](https://raw.githubusercontent.com/wenxueru/router-monitor/main/docs/images/dashboard.jpg)
+![Dashboard — anonymized data](https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/dashboard.jpg)
 
 ## Install and run
 
-Python 3.10+. Run from the repository root:
+Python 3.10+:
 
 ```bash
-python -m pip install .
+python -m pip install llm-router-monitor
 rmon http://127.0.0.1:4000
 ```
 
-Open [localhost:8899](http://localhost:8899/). `router-monitor` is equivalent to `rmon`; all options are listed in `rmon --help`.
+Open [localhost:8899](http://localhost:8899/). `llm-router-monitor` is equivalent to `rmon`; all options are listed in `rmon --help`.
 
 | Option | Purpose |
 | --- | --- |
@@ -77,7 +77,7 @@ rmon http://127.0.0.1:8080 \
 - Settings saves the window, refresh interval, language, and theme. Enter minutes for the window and seconds for refresh; decimals are supported.
 - The default window is 24 hours, starting no earlier than the first sample. History accumulates in memory until the monitor restarts.
 
-![Per-model trends — anonymized data](https://raw.githubusercontent.com/wenxueru/router-monitor/main/docs/images/trends.jpg)
+![Per-model trends — anonymized data](https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/trends.jpg)
 
 | Endpoint | Response |
 | --- | --- |
@@ -119,4 +119,4 @@ ruff format --check router_monitor tests
 python -m build
 ```
 
-Build outputs are written to `dist/`. Install a wheel with `python -m pip install dist/router_monitor-0.1.0-py3-none-any.whl`.
+Build outputs are written to `dist/`. Install a wheel with `python -m pip install dist/llm_router_monitor-0.0.1-py3-none-any.whl`.
