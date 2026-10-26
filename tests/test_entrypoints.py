@@ -9,6 +9,7 @@ from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
 import typer
+from click import unstyle
 from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
@@ -96,8 +97,8 @@ class ConfigTests(unittest.TestCase):
         with patch("router_monitor.cli.MonitorApplication") as application:
             result = CliRunner().invoke(app, ["--help"])
             self.assertEqual(result.exit_code, 0)
-            self.assertIn("--keepalive", result.output)
-            self.assertIn("MASTER_HOST", result.output)
+            self.assertIn("--keepalive", unstyle(result.output))
+            self.assertIn("MASTER_HOST", unstyle(result.output))
             for args in [
                 ["--port", "65536"],
                 ["--interval", "0"],
