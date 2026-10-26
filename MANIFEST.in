@@ -1,0 +1,4 @@
+include README.zh-CN.md
+recursive-include scripts *.sh
+recursive-include docs/images *.svg *.jpg
+recursive-include tests *.py
