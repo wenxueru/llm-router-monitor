@@ -34,7 +34,7 @@ class MonitorConfig:
     api_key: str = field(default="", repr=False)
     worker_api_key: str = field(default="", repr=False)
     interval: float = 2.0
-    history_window: float = 1440.0
+    history_window: float = 720.0
     web_port: int = 8899
     keepalive: bool = False
     auto_unregister: bool = False

@@ -85,11 +85,13 @@ def render_terminal(snapshot: dict, config: MonitorConfig) -> None:
         lines.append(f"\n\033[1mActive: \033[1;33m{active}\033[0m{traffic}")
 
         for model, workers in sorted(snapshot["by_model"].items()):
-            lines.extend((
-                f"\n\x1b[1;33m  {model}  \x1b[2m({len(workers)} workers)\x1b[0m",
-                f"  \x1b[1m{'Worker':<22} {'Run':>5} {'Wait':>4}  {'KV%':>4}  {'TPS':>5}  {'TTFT':>7}  {'Accept':>6}  {'Hit':>4}\x1b[0m",
-                "  " + "─" * width,
-            ))
+            lines.extend(
+                (
+                    f"\n\x1b[1;33m  {model}  \x1b[2m({len(workers)} workers)\x1b[0m",
+                    f"  \x1b[1m{'Worker':<22} {'Run':>5} {'Wait':>4}  {'KV%':>4}  {'TPS':>5}  {'TTFT':>7}  {'Accept':>6}  {'Hit':>4}\x1b[0m",
+                    "  " + "─" * width,
+                )
+            )
             for worker in workers:
                 detail = snapshot["details"].get(worker, {})
                 running = f"{detail['running']:>5.1f}" if "running" in detail else "    -"
@@ -100,7 +102,9 @@ def render_terminal(snapshot: dict, config: MonitorConfig) -> None:
                 ttft = f"{detail['ttft_p50_ms']:>5.0f}ms" if "ttft_p50_ms" in detail else "      -"
                 accept_len = f"{detail['spec_accept_len']:>6.2f}" if "spec_accept_len" in detail else "     -"
                 worker_name = worker.replace("http://", "")
-                lines.append(f"  {worker_name:<22}  {running} {waiting}  {kv_pct}  {tps}  {ttft}  {accept_len}  {hit:>4}")
+                lines.append(
+                    f"  {worker_name:<22}  {running} {waiting}  {kv_pct}  {tps}  {ttft}  {accept_len}  {hit:>4}"
+                )
 
         aged = sorted(
             ((label, count) for label, count in snapshot["age"].items() if count),

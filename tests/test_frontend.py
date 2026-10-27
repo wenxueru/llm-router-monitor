@@ -328,7 +328,10 @@ assert.match($('worker-rows').innerHTML, /未提供 rank 健康状态/);
 """)
 
     def test_polling_renders_trends_and_retains_data_during_connection_failure(self):
-        self.evaluate(r"""
+        self.evaluate(
+            r"""
+assert.equal(Number($('window').value), 5);
+assert.equal($('history-note').textContent, 'Last 5 min');
 assert.equal($('status').textContent, 'Live');
 assert.ok($('settings'));
 for (const removed of ['pause', 'refresh', 'download', 'models', 'age']) assert.equal($(removed), undefined);
@@ -380,7 +383,9 @@ assert.equal($('notice').hidden, true);
 $('health').value = 'unhealthy'; $('health').trigger('change');
 assert.equal($('unhealthy-rows').hidden, false);
 assert.match($('worker-rows').innerHTML, /warning:4563/);
-""")
+""",
+            stored={"router-monitor-window": "180"},
+        )
 
     def test_charts_preserve_zoom_selection_theme_and_gaps(self):
         self.evaluate(r"""
@@ -421,6 +426,43 @@ $('reset-zoom').trigger('click');
 assert.equal(load.getOption().dataZoom[0].start, 0);
 assert.equal(load.getOption().dataZoom[0].end, 100);
 assert.equal(load.getOption().legend[0].selected.a, false);
+""")
+
+    def test_trends_omit_empty_series_and_keep_lines_when_zoomed(self):
+        self.evaluate(r"""
+fixture.history = Array.from({length: 180}, (_, i) => ({
+  at: 1792900800 + i,
+  by_model: {
+    a: {kv_pct: i === 90 ? 9 : i % 2 * 2},
+    unknown: {kv_pct: null, running: 0},
+  },
+}));
+await tick();
+const chart = renderedCharts.get('plot-kv');
+const ids = plot => Array.from(renderedCharts.get(plot).getOption().series, item => item.id);
+assert.deepEqual(ids('plot-kv'), ['a']);
+assert.deepEqual(ids('plot-running'), ['unknown']);
+assert.equal(renderedCharts.get('plot-running').getOption().series[0].data[0][1], 0);
+
+const assertThinLine = () => {
+  const series = chart.getOption().series[0];
+  assert.equal(series.lineStyle.width, 1);
+  assert.ok(series.lineStyle.opacity > 0);
+  assert.equal(series.showSymbol, false);
+};
+const data = chart.getOption().series[0].data;
+assert.equal(data.length, fixture.history.length);
+assert.equal(Math.max(...data.map(point => point[1])), 9);
+assertThinLine();
+chart.dispatchAction({type: 'dataZoom', start: 80, end: 100});
+assertThinLine();
+$('reset-zoom').trigger('click');
+assertThinLine();
+
+fixture.history.at(-1).by_model.unknown.kv_pct = 0;
+await tick();
+assert.deepEqual(ids('plot-kv'), ['a', 'unknown']);
+assert.equal(chart.getOption().series[1].data.at(-1)[1], 0);
 """)
 
     def test_chart_units_follow_data_magnitude(self):

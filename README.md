@@ -31,6 +31,7 @@ Open [localhost:8899](http://localhost:8899/). `llm-router-monitor` is equivalen
 | `--router-type TYPE` | Override automatic detection |
 | `--web-port PORT` | Dashboard port; default `8899`, `0` for terminal only |
 | `--interval SECONDS` | Collection interval; default `2` |
+| `--history-window MINUTES` | Initial chart window on each page load; default `720` (12 hours) |
 
 The dashboard binds to `0.0.0.0`. Set `ROUTER_API_KEY` for Router authentication and `WORKER_API_KEY` for worker authentication. The positional URL takes precedence over `--router-url` and `ROUTER_URL`.
 
@@ -69,13 +70,19 @@ rmon http://127.0.0.1:8080 \
   --worker http://worker-a:8000 --worker http://worker-b:8000
 ```
 
-## Metrics
+## Reading the dashboard
 
-- TTFT/ITL use count-weighted counter deltas; cache hit uses a 60-second token-weighted window.
+- Each chart shows models with observations for that metric in the selected time window. Zero is a valid observation; a missing value is not. “Unknown model” means model discovery failed, and remains visible when metrics are available.
+- Trends use thin lines; zoom in to inspect dense observations. Zoom stays synchronized across charts. Use the legend to hide or show a model.
 - Missing values remain missing. TTFT/ITL connect valid observations; other charts bridge gaps up to 30 seconds with dashed lines. Collection outages and unavailable models stay disconnected.
 - Axes adapt to the data: nonnegative values, percentages within 0–100%, and integer count ticks.
-- Settings saves the window, refresh interval, language, and theme. Enter minutes for the window and seconds for refresh; decimals are supported.
-- The default window is 24 hours, starting no earlier than the first sample. History accumulates in memory until the monitor restarts.
+
+### Metrics and history
+
+- TTFT/ITL use count-weighted counter deltas; cache hit uses a 60-second token-weighted window.
+- Each page load uses the server's configured window: 12 hours by default, starting no earlier than available data. Window adjustments apply only to the current page.
+- History accumulates in memory and clears when the monitor restarts.
+- Refresh interval, language, and theme are remembered. Window and refresh inputs accept decimals, in minutes and seconds respectively.
 
 ![Per-model trends — anonymized data](https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/trends.jpg)
 

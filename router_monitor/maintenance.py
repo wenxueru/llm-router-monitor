@@ -29,7 +29,9 @@ class KeepaliveWarmer:
         if snapshot.get("router_type", "sglang") != "sglang":
             return {}
         active = snapshot.get("active_pw", {})
-        idle = {row["url"] for row in snapshot.get("worker_rows", []) if row.get("running") == 0 and row.get("waiting") == 0}
+        idle = {
+            row["url"] for row in snapshot.get("worker_rows", []) if row.get("running") == 0 and row.get("waiting") == 0
+        }
         return {
             url: model
             for model, urls in snapshot.get("by_model", {}).items()
@@ -103,7 +105,9 @@ class KeepaliveWarmer:
 class AutoUnregister:
     """Opt-in cleanup of mismatched models or persistently unreachable hosts."""
 
-    def __init__(self, router_url: str, *, model_mismatch: bool = True, unavailable_after: float = 0, api_key: str = ""):
+    def __init__(
+        self, router_url: str, *, model_mismatch: bool = True, unavailable_after: float = 0, api_key: str = ""
+    ):
         self.router_url = router_url
         self.model_mismatch = model_mismatch
         self.unavailable_after = unavailable_after
@@ -152,7 +156,9 @@ class AutoUnregister:
             self._pending[url] = (ids, self._pool.submit(self._unregister, url, ranks, reason, probe=not mismatch))
 
     def _unavailable_expired(self, url: str, ranks: list[dict], ids: tuple, now: float) -> bool:
-        if not self.unavailable_after or any(rank.get("is_healthy") is not False or rank.get("load", 0) > 0 for rank in ranks):
+        if not self.unavailable_after or any(
+            rank.get("is_healthy") is not False or rank.get("load", 0) > 0 for rank in ranks
+        ):
             self._unavailable_since.pop(url, None)
             return False
         previous_ids, since = self._unavailable_since.get(url, (ids, now))

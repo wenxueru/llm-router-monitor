@@ -1322,11 +1322,6 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           unavailableExpanded: false,
           modelColors: new Map(),
         };
-        const charts = new Map();
-        const chartResize = new ResizeObserver((entries) => {
-          for (const entry of entries)
-            echarts.getInstanceByDom(entry.target)?.resize();
-        });
         const media = matchMedia("(prefers-color-scheme: dark)");
         function applyTheme() {
           document.documentElement.dataset.theme =
@@ -1336,7 +1331,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
                 : "light"
               : preferences.theme;
           $("theme").value = preferences.theme;
-          if (charts.size) renderCharts();
+          if (trendCharts.size) renderCharts();
         }
 
         function applyLanguage() {
@@ -1527,39 +1522,58 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             },
           };
         }
-        function getChart(id) {
-          if (!charts.has(id)) {
-            const element = $(id);
-            const chart = echarts.init(element, null, { renderer: "svg" });
-            charts.set(id, chart);
-            chartResize.observe(element);
-            chart.on("datazoom", () => {
-              const zoom = chart.getOption().dataZoom[0];
-              for (const other of charts.values())
-                if (other !== chart)
-                  other.dispatchAction(
-                    { type: "dataZoom", start: zoom.start, end: zoom.end },
-                    { silent: true },
-                  );
+        class TrendCharts {
+          constructor() {
+            this.charts = new Map();
+            this.resizeObserver = new ResizeObserver((entries) => {
+              for (const { target } of entries) {
+                const chart = this.charts.get(target.getAttribute("id"));
+                chart.resize();
+              }
             });
           }
-          return charts.get(id);
+          get size() {
+            return this.charts.size;
+          }
+          get(id) {
+            if (!this.charts.has(id)) {
+              const element = $(id);
+              const chart = echarts.init(element, null, { renderer: "svg" });
+              this.charts.set(id, chart);
+              this.resizeObserver.observe(element);
+              chart.on("datazoom", () => {
+                const { start, end } = chart.getOption().dataZoom[0];
+                this.zoom(start, end, chart);
+              });
+            }
+            return this.charts.get(id);
+          }
+          zoom(start = 0, end = 100, source = null) {
+            for (const chart of this.charts.values()) {
+              if (chart !== source)
+                chart.dispatchAction(
+                  { type: "dataZoom", start, end },
+                  { silent: true },
+                );
+            }
+          }
+          render(id, option) {
+            const chart = this.get(id);
+            const previous = chart.getOption() ?? {};
+            const names = new Map(
+              (previous.series || []).map((series) => [series.id, series.name]),
+            );
+            const selected = previous.legend?.[0]?.selected || {};
+            option.legend.selected = Object.fromEntries(
+              option.series.map((series) => [
+                series.name,
+                selected[names.get(series.id)] ?? true,
+              ]),
+            );
+            chart.setOption(option, { replaceMerge: ["series"] });
+          }
         }
-        function updateChart(id, option) {
-          const chart = getChart(id);
-          const previous = chart.getOption() ?? {};
-          const names = new Map(
-            (previous.series || []).map((series) => [series.id, series.name]),
-          );
-          const selected = previous.legend?.[0]?.selected || {};
-          option.legend.selected = Object.fromEntries(
-            option.series.map((series) => [
-              series.name,
-              selected[names.get(series.id)] ?? true,
-            ]),
-          );
-          chart.setOption(option, { replaceMerge: ["series"] });
-        }
+        const trendCharts = new TrendCharts();
         function emptyTitle(text, visible, palette) {
           return {
             show: visible,
@@ -1946,17 +1960,20 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
         }
 
         function chartSeries(def, samples, names) {
-          return names.map((name) => ({
-            id: name,
-            name: modelName(name),
-            color: colorFor(name),
-            ...lineData(samples, name, def),
-          }));
+          return names
+            .map((name) => ({
+              id: name,
+              name: modelName(name),
+              color: colorFor(name),
+              ...lineData(samples, name, def),
+            }))
+            .filter((series) => series.observations > 0);
         }
         function lineData(samples, model, def) {
           const data = [],
             gaps = [];
           let lastObserved = null;
+          let observations = 0;
           for (let index = 0; index < samples.length; index++) {
             const at = samples[index].at * 1000;
             if (index > 0) {
@@ -1973,6 +1990,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             const value = observedModel?.[def.key];
             const point = [at, Number.isFinite(value) ? value : null];
             data.push(point);
+            if (point[1] !== null) observations++;
             if (!observedModel || observedModel.metrics_workers === 0) {
               lastObserved = null;
               continue;
@@ -1987,7 +2005,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
             }
             lastObserved = { index, point };
           }
-          return { data, gaps };
+          return { data, gaps, observations };
         }
         function valueAxisBounds(def) {
           const padding = ({ min, max }) =>
@@ -2045,15 +2063,13 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           const series = chartSeries(def, samples, names);
           const unit = chartUnit(def, series);
           $("note-" + def.id).textContent = unit.label;
-          const hasData = series.some((item) =>
-            item.data.some(([, value]) => value !== null),
-          );
+          const hasData = series.length > 0;
           const base = chartBase(palette);
           const end =
             (state.history.at(-1)?.at ??
               state.snapshot?.collected_at ??
               Date.now() / 1000) * 1000;
-          updateChart("plot-" + def.id, {
+          trendCharts.render("plot-" + def.id, {
             ...base,
             aria: {
               enabled: true,
@@ -2182,14 +2198,15 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
                 id: item.id,
                 name: item.name,
                 type: "line",
-                showSymbol: samples.length === 1,
-                symbolSize: 5,
+                showSymbol: item.observations === 1,
+                symbol: "circle",
+                symbolSize: 4,
+                lineStyle: { width: 1, opacity: 0.85 },
                 connectNulls: false,
                 smooth: false,
                 clip: true,
                 sampling: "lttb",
                 emphasis: { focus: "series" },
-                lineStyle: { width: 2 },
                 itemStyle: { color },
                 data: item.data,
                 markLine: {
@@ -2209,13 +2226,6 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
               };
             }),
           });
-        }
-        function resetZoom() {
-          for (const chart of charts.values())
-            chart.dispatchAction(
-              { type: "dataZoom", start: 0, end: 100 },
-              { silent: true },
-            );
         }
         function renderCharts() {
           const samples = slicedHistory();
@@ -2347,27 +2357,29 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
               }
             };
           });
-          $("reset-zoom").onclick = resetZoom;
+          $("reset-zoom").onclick = () => trendCharts.zoom();
           for (const [id, fallback] of [
             ["window", CONFIG.historyWindowMinutes],
             ["interval", CONFIG.intervalMs / 1000],
           ]) {
             const input = $(id);
-            try {
-              input.value =
-                localStorage.getItem("router-monitor-" + id) ?? fallback;
-            } catch {
-              input.value = fallback;
+            input.value = fallback;
+            if (id === "interval") {
+              try {
+                input.value =
+                  localStorage.getItem("router-monitor-interval") ?? fallback;
+              } catch {}
             }
             if (!input.checkValidity()) input.value = fallback;
             preferences[id] = Number(input.value);
             input.oninput = input.onchange = () => {
               if (!input.checkValidity()) return;
               preferences[id] = Number(input.value);
-              savePreference("router-monitor-" + id, input.value);
               if (id === "window") {
-                resetZoom();
+                trendCharts.zoom();
                 renderCharts();
+              } else {
+                savePreference("router-monitor-interval", input.value);
               }
               return poll();
             };

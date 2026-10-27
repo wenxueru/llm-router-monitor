@@ -39,7 +39,7 @@ class ConfigTests(unittest.TestCase):
             default = self.invoke()
             self.assertEqual(default.host, "127.0.0.1")
             self.assertEqual(default.router_type, RouterType.auto)
-            self.assertEqual(default.history_window, 1440)
+            self.assertEqual(default.history_window, 720)
             self.assertFalse(default.keepalive)
             self.assertEqual(default.keepalive_max_tokens, 64)
             self.assertFalse(default.auto_unregister)
@@ -165,6 +165,6 @@ class DashboardTests(unittest.TestCase):
             with patch("router_monitor.dashboard.files", return_value=root):
                 app = WebDashboard(config, SnapshotStore()).create_app()
             with TestClient(app) as client:
-                self.assertEqual(client.get("/").text, "first 2000 1440 min")
+                self.assertEqual(client.get("/").text, "first 2000 720 min")
                 template.write_text("second COLLECTION_S WIN_DEFAULT_MIN")
-                self.assertEqual(client.get("/").text, "second 2.0 1440")
+                self.assertEqual(client.get("/").text, "second 2.0 720")
