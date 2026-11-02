@@ -11,7 +11,8 @@
 
 - Preserve missing values, counter-reset handling, count/token weighting, complete DP coverage, and worst-rank health. Proxy health does not establish rank health.
 - Scope Router credentials to configured origins; use separate worker credentials.
-- Deregister managed SGLang hosts only after all ranks stay unhealthy and idle for the grace period and a connection probe fails. HTTP errors and read timeouts retain the worker. Recovery, re-registration, and registry loss reset the timer; accepted removal requests do not prove deletion.
+- Unavailable-host cleanup requires all managed SGLang ranks to remain unhealthy and idle for the grace period, then a probe raising `ConnectError`, `ConnectTimeout`, `ReadTimeout`, or `RemoteProtocolError`. HTTP status errors and other probe failures retain the worker.
+- Recovery, re-registration, and registry loss reset the cleanup timer. Accepted removal requests do not prove deletion.
 - Keepalive and model-mismatch cleanup are opt-in. Keepalive requires observed idle load and backs off on failure.
 - Store in-memory history as Unix timestamps and per-model metrics; compute summaries once.
 

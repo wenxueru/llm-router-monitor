@@ -97,11 +97,13 @@ rmon http://127.0.0.1:8080 \
 
 | 参数 | 默认值 | 行为 |
 | --- | --- | --- |
-| `--unregister-unavailable-after 秒数` | `1800` | 所有 rank 持续不健康且空闲，最终连接探测失败后注销；`0` 关闭清理 |
-| `--keepalive` | 关闭 | 向已观测为空闲的 worker 发送短推理请求 |
+| `--unregister-unavailable-after 秒数` | `1800` | 所有 rank 持续不健康且空闲，最终可用性探测失败后注销；`0` 关闭清理 |
+| `--keepalive` | 关闭 | 向已观测为空闲的 worker 发送短推理请求；失败后退避重试 |
 | `--auto-unregister` | 关闭 | 注销实际模型与注册模型不一致的记录 |
 
-恢复、重新注册或丢失注册表观测后，清理计时重新开始。保活失败后退避重试。注销不停止 worker 进程。
+- 不可用清理仅接受探测中的连接失败、连接或读取超时、远端协议异常；HTTP 状态错误及其他探测失败仍保留 worker。
+- 恢复、重新注册或丢失注册表观测后，宽限期重新计时。
+- 注销只移除 Router 注册记录，不停止 worker 进程。删除请求被接受不代表记录已删除。
 
 启动 SGLang Router：安装提供 `RouterArgs` 的兼容 `sglang_router` 运行时，执行 `bash scripts/router.sh`。使用 `rmon --host 127.0.0.1` 监控，默认 API 端口为 `2730`，指标端口为 `29000`。
 

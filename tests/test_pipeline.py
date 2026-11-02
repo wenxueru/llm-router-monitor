@@ -221,6 +221,8 @@ class PipelineTests(unittest.TestCase):
                     raise httpx.ConnectError("refused", request=request)
                 if host == "slow":
                     raise httpx.ReadTimeout("busy", request=request)
+                if host == "disconnected":
+                    raise httpx.RemoteProtocolError("disconnected", request=request)
                 if host == "error":
                     return httpx.Response(503)
                 return httpx.Response(200, json={"data": [{"id": "actual"}]})
@@ -232,7 +234,7 @@ class PipelineTests(unittest.TestCase):
         cleanup._http = HttpClient(transport=httpx.MockTransport(handle))
         workers = [
             {"id": host, "url": f"http://{host}", "is_healthy": False, "load": 0, "model_id": "registered"}
-            for host in ("gone", "responding", "slow", "error", "busy", "partial")
+            for host in ("gone", "responding", "slow", "disconnected", "error", "busy", "partial")
         ]
         workers[-2]["load"] = 1
         workers.append({"id": "healthy-rank", "url": "http://partial@1", "is_healthy": True})
@@ -248,17 +250,18 @@ class PipelineTests(unittest.TestCase):
             reconcile(0)
             reconcile(59)
             self.assertEqual(probes, [])
-            reconcile(60)
-            self.assertCountEqual(probes, ["gone", "responding", "slow", "error"])
-            self.assertEqual(
-                mutations, [("POST", "http://router/workers"), ("DELETE", "http://router/workers/host-id")]
-            )
-            reconcile(61)
-            reconcile(120)
-            self.assertEqual(len(probes), 4)
-            reconcile(121)
-            self.assertCountEqual(probes, ["gone", "responding", "slow", "error"] * 2)
-            self.assertEqual(len(mutations), 4)
+            expected_probes = ["gone", "responding", "slow", "disconnected", "error"]
+            expected_mutations = [
+                ("POST", "http://router/workers"),
+                ("DELETE", "http://router/workers/host-id"),
+                ("DELETE", "http://router/workers/slow"),
+                ("DELETE", "http://router/workers/disconnected"),
+            ]
+            for now, attempts in [(60, 1), (61, 1), (120, 1), (121, 2)]:
+                with self.subTest(now=now):
+                    reconcile(now)
+                    self.assertCountEqual(probes, expected_probes * attempts)
+                    self.assertCountEqual(mutations, expected_mutations * attempts)
         finally:
             cleanup.close()
 

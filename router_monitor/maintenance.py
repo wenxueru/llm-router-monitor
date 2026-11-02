@@ -171,10 +171,10 @@ class AutoUnregister:
         if probe:
             try:
                 self._http.request_json(f"{url}/v1/models", method="GET", timeout=2)
-            except (httpx.ConnectError, httpx.ConnectTimeout):
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.RemoteProtocolError):
                 pass
             except (httpx.HTTPError, httpx.InvalidURL, ValueError):
-                # An HTTP response or a read timeout does not prove the host is gone.
+                # Other HTTP failures do not establish that the host is unavailable.
                 return False
             else:
                 return False
