@@ -98,12 +98,24 @@ These policies apply to SGLang-managed registrations only.
 | Option | Default | Action |
 | --- | --- | --- |
 | `--unregister-unavailable-after SECONDS` | `1800` | Unregister a host after all ranks stay unhealthy and idle, followed by a failed availability probe; `0` disables cleanup |
-| `--keepalive` | Off | Send short inference requests to observed idle workers; back off after failures |
+| `--keepalive` | Off | Send varied synthetic tasks to observed idle workers; back off after failures |
 | `--auto-unregister` | Off | Remove registrations whose model differs from the serving model |
 
 - Availability cleanup requires a connection error, a connection/read timeout, or a remote protocol error from the probe. HTTP status errors and other probe failures retain the worker.
 - Recovery, re-registration, or lost registry visibility resets the grace period.
 - Deregistration removes Router records, not worker processes. An accepted removal request does not confirm deletion.
+
+### Keepalive workload
+
+Keepalive randomly chooses summarization, troubleshooting, status-writing, or comparison tasks using synthetic observations. Task content and sampling temperature vary between requests.
+
+| Option | Default | Per-request or per-round behavior |
+| --- | --- | --- |
+| `--keepalive-prompt-words` | `512` | Synthetic context length varies from one eighth to the configured word limit; task instructions add a small overhead |
+| `--keepalive-max-tokens` | `64` | Generation budget varies from one quarter to the configured limit; actual output may be shorter |
+| `--keepalive-concurrency` | `8` | Each idle worker receives a random 1 to this many requests per round; at most 32 requests run concurrently across all workers |
+
+Length and token lower bounds round down, with a minimum of 1. Only workers with observed idle load and an identified model receive keepalive requests.
 
 To launch SGLang Router, install a compatible `sglang_router` runtime exposing `RouterArgs`, then run `bash scripts/router.sh`. Monitor it with `rmon --host 127.0.0.1` (API `2730`, metrics `29000`).
 

@@ -31,37 +31,33 @@ class PipelineTests(unittest.TestCase):
                 connection_ports.append(self.client_address[1])
                 if self.path == "/workers":
                     base = f"http://127.0.0.1:{self.server.server_port}"
-                    body = json.dumps(
-                        {
-                            "workers": [
-                                {
-                                    "id": "a",
-                                    "url": base + "@0",
-                                    "load": 1,
-                                    "is_healthy": True,
-                                    "model_id": "registered-model",
-                                },
-                                {
-                                    "id": "b",
-                                    "url": base + "@1",
-                                    "load": 2,
-                                    "is_healthy": True,
-                                    "model_id": "registered-model",
-                                },
-                            ]
-                        }
-                    )
+                    body = json.dumps({
+                        "workers": [
+                            {
+                                "id": "a",
+                                "url": base + "@0",
+                                "load": 1,
+                                "is_healthy": True,
+                                "model_id": "registered-model",
+                            },
+                            {
+                                "id": "b",
+                                "url": base + "@1",
+                                "load": 2,
+                                "is_healthy": True,
+                                "model_id": "registered-model",
+                            },
+                        ]
+                    })
                 elif self.path == "/v1/models":
                     body = json.dumps({"data": [{"id": "test"}]})
                 elif self.path == "/v1/loads":
-                    body = json.dumps(
-                        {
-                            "loads": [
-                                {"dp_rank": 0, "num_waiting_uncached_tokens": 100},
-                                {"dp_rank": 1, "num_waiting_uncached_tokens": 200},
-                            ]
-                        }
-                    )
+                    body = json.dumps({
+                        "loads": [
+                            {"dp_rank": 0, "num_waiting_uncached_tokens": 100},
+                            {"dp_rank": 1, "num_waiting_uncached_tokens": 200},
+                        ]
+                    })
                 elif self.path == "/metrics":
                     body = (
                         f'smg_http_requests_total{{route="chat"}} {counters["requests"]}\n'
@@ -190,11 +186,12 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(warmer.idle_workers(), {"http://idle": "chosen"})
             with patch.object(warmer._http, "request_json", return_value={"choices": [{}]}) as send:
                 self.assertEqual(warmer.run_round(), {"http://idle": True})
+            self.assertIn(send.call_count, range(1, config.keepalive_concurrency + 1))
             for args in send.call_args_list:
                 self.assertEqual(args.args, ("http://idle/v1/chat/completions",))
                 self.assertEqual(args.kwargs["method"], "POST")
                 self.assertEqual(args.kwargs["payload"]["model"], "chosen")
-                self.assertEqual(args.kwargs["payload"]["max_tokens"], 128)
+                self.assertIn(args.kwargs["payload"]["max_tokens"], range(32, 129))
 
             with (
                 patch.object(warmer, "ping", side_effect=[True, False]),

@@ -68,9 +68,7 @@ def monitor(
         str | None,
         typer.Argument(help="Router base URL; overrides --router-url and ROUTER_URL."),
     ] = None,
-    host: Annotated[
-        str, typer.Option(envvar="MASTER_HOST", help="Router host.", rich_help_panel="Connection")
-    ] = "127.0.0.1",
+    host: Annotated[str, typer.Option(envvar="MASTER_HOST", help="Router host.", rich_help_panel="Connection")] = "127.0.0.1",
     port: Annotated[int, typer.Option(min=1, max=65535, help="Router API port.", rich_help_panel="Connection")] = 2730,
     prom_port: Annotated[
         int, typer.Option(envvar="PROM_PORT", min=1, max=65535, help="Prometheus port.", rich_help_panel="Connection")
@@ -88,18 +86,14 @@ def monitor(
     ] = "",
     admin_url: Annotated[
         str,
-        typer.Option(
-            envvar="ROUTER_ADMIN_URL", help="Separate admin base URL (e.g. Envoy).", rich_help_panel="Connection"
-        ),
+        typer.Option(envvar="ROUTER_ADMIN_URL", help="Separate admin base URL (e.g. Envoy).", rich_help_panel="Connection"),
     ] = "",
     router_type: Annotated[
         RouterType, typer.Option(help="Router dialect; auto detects exposed interfaces.", rich_help_panel="Connection")
     ] = RouterType.auto,
     worker: Annotated[
         list[str] | None,
-        typer.Option(
-            "--worker", help="Worker base URL; repeat for proxies without discovery.", rich_help_panel="Connection"
-        ),
+        typer.Option("--worker", help="Worker base URL; repeat for proxies without discovery.", rich_help_panel="Connection"),
     ] = None,
     api_key: Annotated[
         str,
@@ -111,9 +105,7 @@ def monitor(
     ] = "",
     worker_api_key: Annotated[
         str,
-        typer.Option(
-            envvar="WORKER_API_KEY", help="Separate Bearer token for worker endpoints.", rich_help_panel="Connection"
-        ),
+        typer.Option(envvar="WORKER_API_KEY", help="Separate Bearer token for worker endpoints.", rich_help_panel="Connection"),
     ] = "",
     interval: Annotated[
         float,
@@ -127,9 +119,7 @@ def monitor(
     ] = 8899,
     keepalive: Annotated[
         bool,
-        typer.Option(
-            help="Send inference requests to idle SGLang-registered workers.", rich_help_panel="Worker maintenance"
-        ),
+        typer.Option(help="Send inference requests to idle SGLang-registered workers.", rich_help_panel="Worker maintenance"),
     ] = False,
     auto_unregister: Annotated[
         bool,
@@ -148,9 +138,7 @@ def monitor(
     ] = 1800,
     keepalive_model: Annotated[
         str,
-        typer.Option(
-            envvar="KEEPALIVE_MODEL", help="Limit keepalive to one model.", rich_help_panel="Keepalive tuning"
-        ),
+        typer.Option(envvar="KEEPALIVE_MODEL", help="Limit keepalive to one model.", rich_help_panel="Keepalive tuning"),
     ] = "",
     keepalive_interval: Annotated[
         float,
@@ -172,7 +160,7 @@ def monitor(
         typer.Option(
             envvar="KEEPALIVE_MAX_TOKENS",
             min=1,
-            help="Generated tokens per request.",
+            help="Maximum generated tokens per keepalive request.",
             rich_help_panel="Keepalive tuning",
         ),
     ] = 64,
@@ -190,7 +178,7 @@ def monitor(
         typer.Option(
             envvar="KEEPALIVE_PROMPT_WORDS",
             min=1,
-            help="Maximum prompt length in words.",
+            help="Maximum synthetic context length in words.",
             rich_help_panel="Keepalive tuning",
         ),
     ] = 512,

@@ -16,6 +16,25 @@ from .state import SnapshotStore
 logger = logging.getLogger(__name__)
 
 
+def _keepalive_prompt(tag: str, word_limit: int) -> str:
+    words = random.randint(max(1, word_limit // 8), word_limit)
+    task = random.choice((
+        "Summarize these observations for a teammate taking over the shift.",
+        "Suggest a troubleshooting plan and explain which checks to run first.",
+        "Draft a short status update, separating observations from hypotheses.",
+        "Compare two plausible explanations and identify what evidence would distinguish them.",
+    ))
+    notes = []
+    index = 1
+    while len(notes) < words:
+        component = random.choice(("indexer", "gateway", "queue", "cache", "scheduler"))
+        symptom = random.choice(("delayed responses", "repeated retries", "uneven load", "normal throughput"))
+        notes.extend(f"Check {index}: the {component} reported {symptom}.".split())
+        index += 1
+    context = " ".join(notes[:words])
+    return f"{task}\n\nSynthetic observations ({tag}):\n{context}"
+
+
 class KeepaliveWarmer:
     def __init__(self, config: MonitorConfig, store: SnapshotStore):
         self.config = config
@@ -29,9 +48,7 @@ class KeepaliveWarmer:
         if snapshot.get("router_type", "sglang") != "sglang":
             return {}
         active = snapshot.get("active_pw", {})
-        idle = {
-            row["url"] for row in snapshot.get("worker_rows", []) if row.get("running") == 0 and row.get("waiting") == 0
-        }
+        idle = {row["url"] for row in snapshot.get("worker_rows", []) if row.get("running") == 0 and row.get("waiting") == 0}
         return {
             url: model
             for model, urls in snapshot.get("by_model", {}).items()
@@ -43,19 +60,16 @@ class KeepaliveWarmer:
     def ping(self, target: tuple[str, str, str]) -> bool:
         url, model, tag = target
         started = time.monotonic()
-        words = random.randint(self.config.keepalive_prompt_words // 2, self.config.keepalive_prompt_words)
-        prompt = f"Continue this sequence ({tag}): " + " ".join(
-            random.choices(("amber", "birch", "cloud", "delta", "elm", "fern", "green", "hill"), k=words)
-        )
+        token_limit = self.config.keepalive_max_tokens
         try:
             response = self._http.request_json(
                 f"{url}/v1/chat/completions",
                 method="POST",
                 payload={
                     "model": model,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "max_tokens": self.config.keepalive_max_tokens,
-                    "temperature": 0,
+                    "messages": [{"role": "user", "content": _keepalive_prompt(tag, self.config.keepalive_prompt_words)}],
+                    "max_tokens": random.randint(max(1, token_limit // 4), token_limit),
+                    "temperature": random.choice((0.2, 0.5, 0.8, 1.0)),
                 },
                 timeout=40,
             )
@@ -105,9 +119,7 @@ class KeepaliveWarmer:
 class AutoUnregister:
     """Opt-in cleanup of mismatched models or persistently unreachable hosts."""
 
-    def __init__(
-        self, router_url: str, *, model_mismatch: bool = True, unavailable_after: float = 0, api_key: str = ""
-    ):
+    def __init__(self, router_url: str, *, model_mismatch: bool = True, unavailable_after: float = 0, api_key: str = ""):
         self.router_url = router_url
         self.model_mismatch = model_mismatch
         self.unavailable_after = unavailable_after
@@ -156,9 +168,7 @@ class AutoUnregister:
             self._pending[url] = (ids, self._pool.submit(self._unregister, url, ranks, reason, probe=not mismatch))
 
     def _unavailable_expired(self, url: str, ranks: list[dict], ids: tuple, now: float) -> bool:
-        if not self.unavailable_after or any(
-            rank.get("is_healthy") is not False or rank.get("load", 0) > 0 for rank in ranks
-        ):
+        if not self.unavailable_after or any(rank.get("is_healthy") is not False or rank.get("load", 0) > 0 for rank in ranks):
             self._unavailable_since.pop(url, None)
             return False
         previous_ids, since = self._unavailable_since.get(url, (ids, now))
