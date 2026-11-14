@@ -68,21 +68,34 @@ class RouterCollector:
             total = sum(active.values())
         return rps, age, total
 
-    def _group_by_model(self, workers: list[dict], kind: str):
+    def _group_by_model(self, workers: list[dict], kind: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         by_model: dict[str, list[str]] = defaultdict(list)
-        hosts = {worker["url"].split("@")[0]: worker for worker in workers if worker.get("is_healthy") is not False}
+        observed: dict[str, list[str]] = defaultdict(list)
+        sglang = kind == "sglang"
+        hosts = {}
+        registered_models: dict[str, set[str]] = defaultdict(set)
+        for worker in workers:
+            url = worker["url"].split("@")[0]
+            if worker.get("is_healthy") is not False:
+                hosts[url] = worker
+            registered = worker.get("model_id")
+            if sglang and worker.get("managed", True) and registered and registered != "unknown":
+                registered_models[url].add(registered)
         for url, worker in hosts.items():
-            model = worker.get("model_id") if kind != "sglang" else None
+            model = None if sglang else worker.get("model_id")
             if not model:
                 try:
-                    model = self._worker_metrics.get_model(
-                        url, refresh=kind == "sglang" and self.config.auto_unregister
-                    )
+                    model = self._worker_metrics.get_model(url, refresh=sglang and self.config.auto_unregister)
                 except Exception:
-                    logger.warning("Failed to identify model for %s", url, exc_info=True)
-                    model = "unknown"
+                    names = registered_models[url]
+                    model = next(iter(names)) if len(names) == 1 else "unknown"
+                    logger.warning("Failed to identify model for %s; using %s", url, model, exc_info=True)
+                else:
+                    if sglang and self.config.auto_unregister:
+                        observed[model].append(url)
             by_model[model].append(url)
-        return by_model
+        # Registry fallback labels metrics without proving a serving-model mismatch.
+        return by_model, observed
 
     def collect(self) -> dict:
         prometheus_future = self._io_pool.submit(self._source.read_metrics)
@@ -93,7 +106,7 @@ class RouterCollector:
         for worker in registry.workers:
             if worker.get("load") is not None:
                 active[worker["url"].split("@")[0]] += worker["load"]
-        by_model = self._group_by_model(registry.workers, registry.kind)
+        by_model, observed_models = self._group_by_model(registry.workers, registry.kind)
         if registry.kind == "sglang" and registry.available:
             if self._registration is None and (
                 self.config.auto_unregister or self.config.unregister_unavailable_after > 0
@@ -105,7 +118,7 @@ class RouterCollector:
                     api_key=self.config.api_key,
                 )
             if self._registration is not None:
-                self._registration.reconcile([w for w in registry.workers if w.get("managed", True)], by_model)
+                self._registration.reconcile([w for w in registry.workers if w.get("managed", True)], observed_models)
         elif self._registration is not None:
             self._registration.reconcile([], {})
         targets = [url for urls in by_model.values() for url in urls if url not in registry.metrics]

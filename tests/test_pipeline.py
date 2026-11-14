@@ -19,6 +19,29 @@ from router_monitor.state import SnapshotStore
 
 
 class PipelineTests(unittest.TestCase):
+    def test_registry_fallback_does_not_count_as_worker_discovery(self):
+        collector = RouterCollector(MonitorConfig(host="router", auto_unregister=True))
+        ranks = [
+            {"url": "http://worker@0", "model_id": "registered", "is_healthy": True},
+            {"url": "http://worker@1", "model_id": "registered", "is_healthy": False},
+        ]
+        try:
+            with patch.object(collector._worker_metrics, "get_model", side_effect=ValueError("empty response")):
+                with self.assertLogs("router_monitor.collectors", level="WARNING"):
+                    grouped, observed = collector._group_by_model(ranks, "sglang")
+                self.assertEqual(grouped, {"registered": ["http://worker"]})
+                self.assertEqual(observed, {})
+                ranks[1]["model_id"] = "different"
+                with self.assertLogs("router_monitor.collectors", level="WARNING"):
+                    grouped, _ = collector._group_by_model(ranks, "sglang")
+                self.assertEqual(grouped, {"unknown": ["http://worker"]})
+            with patch.object(collector._worker_metrics, "get_model", return_value="actual"):
+                grouped, observed = collector._group_by_model(ranks, "sglang")
+            self.assertEqual(grouped, {"actual": ["http://worker"]})
+            self.assertEqual(observed, grouped)
+        finally:
+            collector.close()
+
     def test_router_worker_collection_and_dashboard(self):
         counters = {"cached": 100, "prompt": 200, "requests": 10}
         mutations = []

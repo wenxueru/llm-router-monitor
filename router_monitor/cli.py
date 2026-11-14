@@ -113,7 +113,7 @@ def monitor(
     ] = 2,
     history_window: Annotated[
         float, typer.Option(min=1, help="Initial history window in minutes.", rich_help_panel="Dashboard")
-    ] = 720,
+    ] = MonitorConfig.history_window,
     web_port: Annotated[
         int, typer.Option(min=0, max=65535, help="Dashboard port; 0 for terminal only.", rich_help_panel="Dashboard")
     ] = 8899,
