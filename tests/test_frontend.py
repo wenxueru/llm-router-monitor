@@ -5,7 +5,12 @@ import shutil
 import subprocess
 import unittest
 from html.parser import HTMLParser
-from importlib.resources import files
+
+from fastapi.testclient import TestClient
+
+from router_monitor.config import MonitorConfig
+from router_monitor.dashboard import create_dashboard
+from router_monitor.state import RouterTarget
 
 
 class DashboardParser(HTMLParser):
@@ -116,6 +121,7 @@ const fixture = {
     ],
   },
   failed: null,
+  requests: [],
 };
 fixture.history = [0, 2].map(offset => ({at: 1792900800 + offset,
   by_model: fixture.snapshot.by_model_stats}));
@@ -141,8 +147,9 @@ const context = {
   setTimeout: (callback, delay) => {timers.set(++nextTimer, {callback, delay}); return nextTimer;},
   clearTimeout: id => timers.delete(id), setInterval() {}, AbortController,
   fetch: async path => {
+    fixture.requests.push(path);
     if (fixture.failed === 'all' || fixture.failed === 'history' && path.startsWith('/history')) throw Error('offline');
-    return {ok: true, json: async () => path === '/data' ? fixture.snapshot : fixture.history};
+    return {ok: true, json: async () => path.split('?')[0] === '/data' ? fixture.snapshot : fixture.history};
   },
 };
 vm.createContext(context);
@@ -189,22 +196,23 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 class DashboardTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        source = (files("router_monitor") / "templates/dashboard.html").read_text(encoding="utf-8")
-        source = source.replace("INTERVAL_MS", "2000").replace("COLLECTION_S", "2").replace("WIN_DEFAULT_MIN", "5")
-        cls.dashboard = DashboardParser(source)
+        config = MonitorConfig(host="router", interval=2, history_window=5)
+        app = create_dashboard({"": RouterTarget(config)})
+        with TestClient(app) as client:
+            response = client.get("/")
+            response.raise_for_status()
+            cls.dashboard = DashboardParser(response.text)
 
     def evaluate(self, assertions, *, stored=None, blocked=False, dark=False):
         result = subprocess.run(
             ["node", "-e", HARNESS.replace("ASSERTIONS", assertions)],
-            input=json.dumps(
-                {
-                    "elements": self.dashboard.elements,
-                    "scripts": self.dashboard.scripts,
-                    "stored": stored or {},
-                    "blocked": blocked,
-                    "dark": dark,
-                }
-            ),
+            input=json.dumps({
+                "elements": self.dashboard.elements,
+                "scripts": self.dashboard.scripts,
+                "stored": stored or {},
+                "blocked": blocked,
+                "dark": dark,
+            }),
             text=True,
             capture_output=True,
         )
@@ -383,6 +391,14 @@ assert.equal($('notice').hidden, true);
 $('health').value = 'unhealthy'; $('health').trigger('change');
 assert.equal($('unhealthy-rows').hidden, false);
 assert.match($('worker-rows').innerHTML, /warning:4563/);
+const router = 'proxy & quoted "name"';
+new Element({id: 'router-target'}, [router]);
+await tick();
+assert.deepEqual(fixture.requests.slice(-2), [
+  '/data?router=' + encodeURIComponent(router),
+  '/history?n=3615&router=' + encodeURIComponent(router),
+]);
+assert.equal($('status').textContent, 'Live');
 """,
             stored={"router-monitor-window": "180"},
         )
@@ -446,7 +462,7 @@ assert.equal(renderedCharts.get('plot-running').getOption().series[0].data[0][1]
 
 const assertThinLine = () => {
   const series = chart.getOption().series[0];
-  assert.equal(series.lineStyle.width, 1);
+  assert.equal(series.lineStyle.width, 1.5);
   assert.ok(series.lineStyle.opacity > 0);
   assert.equal(series.showSymbol, false);
 };
@@ -485,8 +501,14 @@ for (const sample of fixture.history)
   for (const model of Object.values(sample.by_model)) model.tps = 2500000;
 await tick();
 assert.equal($('note-throughput').textContent, 'M token/s');
-assert.equal(renderedCharts.get('plot-throughput').getOption().yAxis[0].axisLabel.formatter(2500000), '2.5');
+assert.equal(renderedCharts.get('plot-throughput').getOption().yAxis[0].axisLabel.formatter(2500000), '2.5M');
 assert.equal($('note-success').textContent, '%');
+const throughput = renderedCharts.get('plot-throughput');
+assert.equal(throughput.getOption().legend[0].formatter('a'), 'a  2.5');
+const last = fixture.history.at(-1);
+last.by_model = {...last.by_model, a: {...last.by_model.a, tps: null}};
+await tick();
+assert.equal(throughput.getOption().legend[0].formatter('a'), 'a  —');
 """)
 
     def test_short_metric_gaps_have_dashed_links_but_outages_do_not(self):

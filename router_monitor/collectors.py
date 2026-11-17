@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 class RouterCollector:
     def __init__(self, config: MonitorConfig):
         self.config = config
-        self._http = HttpClient(
-            token=config.api_key, origins=(config.router_url, config.admin_endpoint, config.prom_url)
-        )
+        self._http = HttpClient(token=config.api_key, origins=(config.router_url, config.admin_endpoint, config.prom_url))
         self._source = RouterSource(config, self._http)
         self._io_pool = ThreadPoolExecutor(max_workers=2)
         self._worker_metrics = WorkerMetricsCollector(config.interval, config.worker_api_key)
@@ -108,9 +106,7 @@ class RouterCollector:
                 active[worker["url"].split("@")[0]] += worker["load"]
         by_model, observed_models = self._group_by_model(registry.workers, registry.kind)
         if registry.kind == "sglang" and registry.available:
-            if self._registration is None and (
-                self.config.auto_unregister or self.config.unregister_unavailable_after > 0
-            ):
+            if self._registration is None and (self.config.auto_unregister or self.config.unregister_unavailable_after > 0):
                 self._registration = AutoUnregister(
                     self.config.router_url,
                     model_mismatch=self.config.auto_unregister,

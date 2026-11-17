@@ -2,14 +2,19 @@
 
 import threading
 import time
+from collections import deque
+from dataclasses import dataclass, field
+from itertools import islice
+
+from .config import MonitorConfig
 
 
 class SnapshotStore:
-    def __init__(self):
+    def __init__(self, history_limit: int | None = None):
         self._lock = threading.Lock()
         self._snapshot: dict = {}
         self._published_at = None
-        self._history: list[dict] = []
+        self._history: deque[dict] = deque(maxlen=history_limit)
 
     def publish(self, snapshot: dict) -> None:
         history_item = {
@@ -28,8 +33,18 @@ class SnapshotStore:
         snapshot.setdefault("by_model", {})
         return snapshot
 
+    def latest_sample(self) -> dict | None:
+        with self._lock:
+            return self._history[-1] if self._history else None
+
     def history(self, limit: int = 0) -> list:
         with self._lock:
-            if limit <= 0:
+            if limit <= 0 or limit >= len(self._history):
                 return list(self._history)
-            return self._history[-limit:]
+            return list(islice(reversed(self._history), limit))[::-1]
+
+
+@dataclass(frozen=True)
+class RouterTarget:
+    config: MonitorConfig
+    store: SnapshotStore = field(default_factory=SnapshotStore)

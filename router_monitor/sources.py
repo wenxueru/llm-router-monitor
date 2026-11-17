@@ -1,6 +1,7 @@
 """Read-only Router discovery and metric dialects."""
 
 import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from urllib.parse import quote
@@ -62,8 +63,16 @@ class RouterSource:
                 urls.append(self.config.separate_prom_url)
         for url in dict.fromkeys(urls):
             text = self.http.fetch(url)
-            if not text or text.lstrip().startswith(("<", "{", "[")):
+            if not text:
                 continue
+            text = text.lstrip()
+            if text.startswith(("<", "{", "[")):
+                continue
+            if self.kind in {"auto", "nginx"} and text.startswith("Active connections:"):
+                counter = re.search(r"accepts[ \t]+handled[ \t]+requests\s+\d+\s+\d+\s+(\d+)(?:\s|$)", text)
+                if counter:
+                    self.metrics_url = url
+                    return [{"name": "nginx_http_requests_total", "labels": {}, "value": int(counter[1])}]
             try:
                 samples = metric_samples(text)
                 if samples:
@@ -112,9 +121,7 @@ class RouterSource:
             result.scope = "workers"
         for url in self.config.worker_urls:
             if url not in known:
-                result.workers.append(
-                    {"id": url, "url": url, "is_healthy": None, "managed": False, "rank_health_known": False}
-                )
+                result.workers.append({"id": url, "url": url, "is_healthy": None, "managed": False, "rank_health_known": False})
         if self.config.worker_urls:
             result.available = True
         return result
@@ -224,9 +231,7 @@ class RouterSource:
             url = "litellm://" + quote(model_id, safe="")
             observed = grouped[model_id]
             states = [s["value"] for s in observed if s["name"] == "litellm_deployment_state"]
-            workers.append(
-                {"id": model_id, "url": url, "model_id": model, "is_healthy": max(states) == 0 if states else None}
-            )
+            workers.append({"id": model_id, "url": url, "model_id": model, "is_healthy": max(states) == 0 if states else None})
             metrics[url] = observed
         return Registry("litellm", workers, registry_ok or bool(deployments), metrics, "deployments")
 

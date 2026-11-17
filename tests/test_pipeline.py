@@ -5,17 +5,20 @@ import threading
 import unittest
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import StringIO
 from unittest.mock import Mock, call, patch
 
 import httpx
 from fastapi.testclient import TestClient
+from rich.console import Console
 
 from router_monitor.collectors import RouterCollector
 from router_monitor.config import MonitorConfig
-from router_monitor.dashboard import WebDashboard, render_terminal
+from router_monitor.dashboard import create_dashboard
 from router_monitor.http import HttpClient
 from router_monitor.maintenance import AutoUnregister, KeepaliveWarmer
-from router_monitor.state import SnapshotStore
+from router_monitor.state import RouterTarget, SnapshotStore
+from router_monitor.terminal import render_terminal
 
 
 class PipelineTests(unittest.TestCase):
@@ -129,9 +132,9 @@ class PipelineTests(unittest.TestCase):
             try:
                 first = collector.collect()
                 self.assertIsNone(first["rps"])
-                with patch("builtins.print") as output:
-                    render_terminal(first, config)
-                self.assertIn("test", output.call_args.args[0])
+                output = StringIO()
+                Console(file=output, width=120).print(render_terminal(first, config))
+                self.assertIn("test", output.getvalue())
                 counters.update(cached=110, prompt=220, requests=20)
                 second = collector.collect()
                 self.assertEqual(list(second["by_model"]), ["test"])
@@ -148,13 +151,14 @@ class PipelineTests(unittest.TestCase):
                 detail = next(iter(second["details"].values()))
                 self.assertEqual(detail["running"], 5)
                 self.assertEqual(detail["hit_ranks"], [70, 90])
-                store = SnapshotStore()
+                store = SnapshotStore(history_limit=1)
                 store.publish(first)
                 store.publish(second)
-                with TestClient(WebDashboard(config, store).create_app()) as client:
+                with TestClient(create_dashboard({"": RouterTarget(config, store)})) as client:
                     self.assertEqual(client.get("/data").json()["summary"]["tps"], 300)
                     history = client.get("/history?n=1").json()
                     self.assertEqual(len(history), 1)
+                    self.assertEqual(client.get("/history").json(), history)
                     self.assertEqual(history[0]["at"], second["collected_at"])
                     self.assertEqual(history[0]["by_model"]["test"]["running"], 5)
                     self.assertEqual(history[0]["by_model"]["test"]["tps"], 300)

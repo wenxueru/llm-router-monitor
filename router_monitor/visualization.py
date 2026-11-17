@@ -133,8 +133,7 @@ def build_visualization(snapshot: dict, registry: list[dict]) -> dict:
     for worker in registry:
         hosts[worker.get("url", "").split("@")[0]].append(worker)
     rows = [
-        _worker_row(url, workers, models.get(url), snapshot["details"].get(url, {}))
-        for url, workers in sorted(hosts.items())
+        _worker_row(url, workers, models.get(url), snapshot["details"].get(url, {})) for url, workers in sorted(hosts.items())
     ]
     summary = _summarize_rows(rows)
     if not snapshot.get("registry_ok", True):

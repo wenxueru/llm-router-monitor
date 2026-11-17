@@ -124,9 +124,7 @@ class WorkerMetricsCollector:
         hit_ranks = [per_rank[rank].get("batch_hit_pct") for rank in ranks]
         if len(hit_ranks) > 1 and any(value is not None for value in hit_ranks):
             detail["hit_ranks"] = hit_ranks
-        detail["dp_metrics"] = (
-            [{"rank": rank, **per_rank[rank]} for rank in ranks] if engine in {"sglang", "vllm"} else []
-        )
+        detail["dp_metrics"] = [{"rank": rank, **per_rank[rank]} for rank in ranks] if engine in {"sglang", "vllm"} else []
         return detail
 
     def _fetch_loads(self, base_url: str) -> dict:

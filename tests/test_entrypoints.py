@@ -1,5 +1,6 @@
 """Check packaged dashboard assets and configuration compatibility."""
 
+import json
 import os
 import sys
 import unittest
@@ -8,16 +9,18 @@ from tempfile import TemporaryDirectory
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
+import httpx
 import typer
 from click import unstyle
 from fastapi.testclient import TestClient
+from jinja2 import FileSystemLoader
 from typer.testing import CliRunner
 
 from router_monitor import router
 from router_monitor.cli import app
-from router_monitor.config import MonitorConfig, RouterType
-from router_monitor.dashboard import WebDashboard
-from router_monitor.state import SnapshotStore
+from router_monitor.config import MonitorConfig, PrometheusHistoryConfig, RouterType
+from router_monitor.dashboard import create_dashboard
+from router_monitor.state import RouterTarget, SnapshotStore
 
 
 class ConfigTests(unittest.TestCase):
@@ -26,7 +29,48 @@ class ConfigTests(unittest.TestCase):
             result = CliRunner().invoke(app, list(args))
             self.assertEqual(result.exit_code, 0, result.output)
             application.return_value.run.assert_called_once()
-            return application.call_args.args[0]
+            return application.call_args.args[0][""]
+
+    def test_named_router_config_cli_and_invalid_input(self):
+        with TemporaryDirectory() as temporary, patch.dict(os.environ, {}, clear=True):
+            path = Path(temporary) / "routers.json"
+            entries = {
+                "inference": {"endpoint": "http://engine:4000", "interval": 3},
+                "proxy": {"endpoint": "http://proxy:8080", "router_type": "nginx", "worker_urls": ["http://worker/"]},
+            }
+            path.write_text(json.dumps(entries))
+            with patch("router_monitor.cli.MonitorApplication") as application:
+                result = CliRunner().invoke(app, ["--router-config", str(path), "--history-window", "90"])
+                self.assertEqual(result.exit_code, 0, result.output)
+                application.return_value.run.assert_called_once()
+                targets = application.call_args.args[0]
+                self.assertEqual(set(targets), {"inference", "proxy"})
+                self.assertEqual(targets["inference"].router_url, "http://engine:4000")
+                self.assertEqual(targets["inference"].interval, 3)
+                self.assertEqual(targets["proxy"].router_type, RouterType.nginx)
+                self.assertEqual(targets["proxy"].worker_urls, ("http://worker",))
+                for target in targets.values():
+                    self.assertEqual(target.history_window, 90)
+                    self.assertEqual(target.unregister_unavailable_after, 0)
+            for content, extra in [
+                (json.dumps(entries), ["--web-port", "0"]),
+                ("{}", []),
+                ('{"bad": {"endpoint": "file:///tmp/router"}}', []),
+                ('{"bad": {"endpoint": "http://router", "typo": 1}}', []),
+                ('{"bad": {"endpoint": "http://router", "keepalive": "true"}}', []),
+                ('{"bad": {"endpoint": "http://router", "interval": NaN}}', []),
+                ('{"bad": {"endpoint": "http://router", "api_key": ["hidden-token"]}}', []),
+                ("invalid json", []),
+            ]:
+                with (
+                    self.subTest(content=content, extra=extra),
+                    patch("router_monitor.cli.MonitorApplication") as application,
+                ):
+                    path.write_text(content)
+                    result = CliRunner().invoke(app, ["--router-config", str(path), *extra])
+                    self.assertNotEqual(result.exit_code, 0)
+                    self.assertNotIn("hidden-token", result.output)
+                    application.assert_not_called()
 
     def test_environment_defaults_and_cli_overrides(self):
         with patch.dict(os.environ, {"PROM_PORT": "30000", "INTERVAL": "5", "KEEPALIVE_MAX_TOKENS": "128"}, clear=True):
@@ -71,20 +115,18 @@ class ConfigTests(unittest.TestCase):
 
     def test_router_connection_options_and_auto_default(self):
         with patch.dict(os.environ, {"ROUTER_API_KEY": "router-secret", "WORKER_API_KEY": "worker-secret"}, clear=True):
-            config = self.invoke(
-                [
-                    "--router-url",
-                    "https://router.example",
-                    "--metrics-url",
-                    "https://metrics.example/metrics",
-                    "--router-type",
-                    "litellm",
-                    "--worker",
-                    "http://worker-a:8000/",
-                    "--worker",
-                    "http://worker-b:8000",
-                ]
-            )
+            config = self.invoke([
+                "--router-url",
+                "https://router.example",
+                "--metrics-url",
+                "https://metrics.example/metrics",
+                "--router-type",
+                "litellm",
+                "--worker",
+                "http://worker-a:8000/",
+                "--worker",
+                "http://worker-b:8000",
+            ])
         self.assertEqual(config.router_type, RouterType.litellm)
         self.assertEqual(config.router_url, "https://router.example")
         self.assertEqual(config.prom_url, "https://metrics.example/metrics")
@@ -137,9 +179,84 @@ class ConfigTests(unittest.TestCase):
 
 
 class DashboardTests(unittest.TestCase):
+    def test_named_router_dashboard_isolates_data_history_and_settings(self):
+        first = MonitorConfig(host="first", interval=2, history_window=60)
+        second = MonitorConfig(host="second", interval=7, history_window=120)
+        first_store, second_store = SnapshotStore(), SnapshotStore()
+        for store, model, at in [
+            (first_store, "first-model", 1),
+            (first_store, "first-model", 2),
+            (second_store, "second-model", 3),
+        ]:
+            store.publish({"collected_at": at, "by_model_stats": {model: {"running": at}}})
+        name = 'second & "quoted"'
+        app = create_dashboard({"first": RouterTarget(first, first_store), name: RouterTarget(second, second_store)})
+        with TestClient(app) as client:
+            self.assertEqual(client.get("/data").json()["by_model_stats"], {"first-model": {"running": 2}})
+            for limit in (1, 0, -1, sys.maxsize + 1):
+                with self.subTest(limit=limit):
+                    expected = [{"at": at, "by_model": {"first-model": {"running": at}}} for at in (1, 2)]
+                    self.assertEqual(
+                        client.get("/history", params={"n": limit}).json(), expected[-1:] if limit == 1 else expected
+                    )
+            self.assertEqual(
+                client.get("/data", params={"router": name}).json()["by_model_stats"], {"second-model": {"running": 3}}
+            )
+            self.assertEqual(client.get("/history", params={"router": name}).json(), second_store.history())
+            html = client.get("/", params={"router": name}).text
+            self.assertIn("collectionSeconds: 7", html)
+            self.assertIn("historyWindowMinutes: 120", html)
+            self.assertIn('value="second &amp; &#34;quoted&#34;" selected', html)
+            for route in ("/", "/data", "/history"):
+                self.assertEqual(client.get(route, params={"router": "missing"}).status_code, 404)
+
+    def test_prometheus_history_merges_stored_and_recent_samples(self):
+        config = MonitorConfig(host="router")
+        store = SnapshotStore()
+        store.publish({"collected_at": 13.1234, "by_model_stats": {"m": {"running": 0, "waiting": None}}})
+        history = PrometheusHistoryConfig("http://prometheus/monitoring", job="example-monitor")
+        name = 'router "A"'
+        app = create_dashboard({name: RouterTarget(config, store)}, history_config=history)
+        requests = []
+
+        def respond(request):
+            requests.append(request)
+            if len(requests) == 2:
+                return httpx.Response(503)
+            series = [
+                {"metric": {"__name__": "router_monitor_sample"}, "values": [[10, "1"], [11, "1"], [13.123, "1"]]},
+                {"metric": {"__name__": "router_monitor_model_running", "model": "m"}, "values": [[10, "7"], [13.123, "4"]]},
+                {"metric": {"__name__": "router_monitor_model_waiting", "model": "m"}, "values": [[10, "NaN"], [11, "+Inf"]]},
+            ]
+            return httpx.Response(200, json={"status": "success", "data": {"resultType": "matrix", "result": series}})
+
+        with TestClient(app) as client:
+            app.state.history.http.close()
+            app.state.history.http = httpx.Client(base_url=history.url, transport=httpx.MockTransport(respond))
+            result = client.get("/history", params={"router": name, "n": 3})
+            self.assertEqual(result.status_code, 200)
+            self.assertEqual(
+                result.json(),
+                [
+                    {"at": 10, "by_model": {"m": {"running": 7}}},
+                    {"at": 11, "by_model": {}},
+                    {"at": 13.1234, "by_model": {"m": {"running": 0, "waiting": None}}},
+                ],
+            )
+            self.assertEqual(requests[0].url.path, "/monitoring/api/v1/query")
+            query = requests[0].url.params["query"]
+            self.assertIn('job="example-monitor"', query)
+            self.assertIn("router=" + json.dumps(name), query)
+            self.assertEqual(client.get("/history", params={"router": name}).status_code, 503)
+            self.assertEqual(client.get("/data", params={"router": name}).status_code, 200)
+            metrics = client.get("/metrics").text
+            labels = 'model="m",router=' + json.dumps(name)
+            self.assertIn(f"router_monitor_model_running{{{labels}}} 0.0 13123", metrics)
+            self.assertNotIn("router_monitor_model_waiting{", metrics)
+
     def test_single_file_dashboard_and_configuration(self):
         config = MonitorConfig(host="192.0.2.1", interval=5, history_window=10)
-        app = WebDashboard(config, SnapshotStore()).create_app()
+        app = create_dashboard({"": RouterTarget(config)})
         with TestClient(app) as client:
             html = client.get("/")
             self.assertEqual(html.status_code, 200)
@@ -161,10 +278,10 @@ class DashboardTests(unittest.TestCase):
             root = Path(temporary)
             template = root / "templates/dashboard.html"
             template.parent.mkdir()
-            template.write_text("first INTERVAL_MS HISTORY_LABEL")
-            with patch("router_monitor.dashboard.files", return_value=root):
-                app = WebDashboard(config, SnapshotStore()).create_app()
+            template.write_text('first {{ interval_ms }} {{ "%g"|format(history_window) }} min')
+            with patch("router_monitor.dashboard.PackageLoader", return_value=FileSystemLoader(template.parent)):
+                app = create_dashboard({"": RouterTarget(config)})
             with TestClient(app) as client:
                 self.assertEqual(client.get("/").text, "first 2000 120 min")
-                template.write_text("second COLLECTION_S WIN_DEFAULT_MIN")
+                template.write_text('second {{ collection_seconds }} {{ "%g"|format(history_window) }}')
                 self.assertEqual(client.get("/").text, "second 2.0 120")

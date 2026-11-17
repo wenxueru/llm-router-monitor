@@ -35,6 +35,34 @@ def collector_for(config, handle):
 
 
 class SourceTests(unittest.TestCase):
+    def test_native_nginx_stub_status_provides_request_counter(self):
+        requests = 100
+
+        def handle(request):
+            if request.url.path == "/stub_status":
+                return httpx.Response(
+                    200,
+                    text=(
+                        "Active connections: 3\nserver accepts handled requests\n"
+                        f" 10 10 {requests}\nReading: 0 Writing: 1 Waiting: 2\n"
+                    ),
+                )
+            return httpx.Response(404)
+
+        config = MonitorConfig(host="proxy", endpoint="http://proxy", metrics_endpoint="http://proxy/stub_status")
+        with (
+            collector_for(config, handle) as collector,
+            patch("router_monitor.collectors.time.monotonic", side_effect=[1, 3]),
+        ):
+            first = collector.collect()
+            requests = 110
+            second = collector.collect()
+        self.assertEqual(first["router_type"], "nginx")
+        self.assertTrue(first["prom_ok"])
+        self.assertIsNone(first["rps"])
+        self.assertEqual(second["rps"], 5)
+        self.assertEqual(second["worker_rows"], [])
+
     def test_detection_and_explicit_workers_across_proxy_families(self):
         for kind, metric in [
             ("nginx", "nginx_http_requests_total"),

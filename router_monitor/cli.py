@@ -1,65 +1,17 @@
-"""Monitor command-line interface and application lifecycle."""
+"""Monitor command-line options and configuration assembly."""
 
-import logging
-import threading
+from pathlib import Path
 from typing import Annotated
 
 import typer
 
-from .collectors import RouterCollector
-from .config import MonitorConfig, RouterType
-from .dashboard import WebDashboard, render_terminal
-from .maintenance import KeepaliveWarmer
-from .state import SnapshotStore
-
-logger = logging.getLogger(__name__)
+from .app import MonitorApplication
+from .config import MonitorConfig, PrometheusHistoryConfig, RouterType, load_router_configs, validate_http_endpoint
 
 app = typer.Typer(
     help="Monitor LLM Routers, worker health, and inference metrics.",
     pretty_exceptions_show_locals=False,
 )
-
-
-class MonitorApplication:
-    def __init__(self, config: MonitorConfig):
-        self.config = config
-        self.collector = RouterCollector(config)
-        self.store = SnapshotStore()
-        self.warmer = KeepaliveWarmer(config, self.store) if config.keepalive else None
-        self._stop = threading.Event()
-
-    def _collect_loop(self) -> None:
-        while not self._stop.is_set():
-            try:
-                snapshot = self.collector.collect()
-                self.store.publish(snapshot)
-                render_terminal(snapshot, self.config)
-            except Exception:
-                logger.exception("Monitor collection cycle failed")
-            self._stop.wait(self.config.interval)
-
-    def run(self) -> None:
-        warmer_thread = None
-        collection_thread = None
-        try:
-            if self.warmer is not None:
-                warmer_thread = threading.Thread(target=self.warmer.run, args=(self._stop,), daemon=True)
-                warmer_thread.start()
-            if self.config.web_port == 0:
-                self._collect_loop()
-            else:
-                collection_thread = threading.Thread(target=self._collect_loop, daemon=True)
-                collection_thread.start()
-                WebDashboard(self.config, self.store).run()
-        except KeyboardInterrupt:
-            pass
-        finally:
-            self._stop.set()
-            if collection_thread is not None:
-                collection_thread.join()
-            self.collector.close()
-            if warmer_thread is not None:
-                warmer_thread.join()
 
 
 @app.command()
@@ -182,33 +134,59 @@ def monitor(
             rich_help_panel="Keepalive tuning",
         ),
     ] = 512,
+    router_config: Annotated[Path | None, typer.Option(help="JSON file of named Router configurations.")] = None,
+    history_prometheus_url: Annotated[str, typer.Option(help="Prometheus base URL for persistent dashboard history.")] = "",
+    history_prometheus_job: Annotated[str, typer.Option(help="Prometheus scrape job for this monitor.")] = "router-monitor",
+    history_prometheus_lookback_hours: Annotated[
+        int, typer.Option(min=1, help="Maximum Prometheus history query window in hours.")
+    ] = 24,
 ):
     """Start the dashboard. Only SGLang registrations support automatic cleanup."""
-    config = MonitorConfig(
-        host=host,
-        port=port,
-        prom_port=prom_port,
-        endpoint=url or router_url,
-        metrics_endpoint=metrics_url,
-        admin_url=admin_url,
-        router_type=router_type,
-        worker_urls=tuple(url.rstrip("/") for url in worker or []),
-        api_key=api_key,
-        worker_api_key=worker_api_key,
-        interval=interval,
-        history_window=history_window,
-        web_port=web_port,
-        keepalive=keepalive,
-        auto_unregister=auto_unregister,
-        unregister_unavailable_after=unregister_unavailable_after,
-        keepalive_model=keepalive_model,
-        keepalive_interval=keepalive_interval,
-        keepalive_max_interval=keepalive_max_interval,
-        keepalive_max_tokens=keepalive_max_tokens,
-        keepalive_concurrency=keepalive_concurrency,
-        keepalive_prompt_words=keepalive_prompt_words,
-    )
-    MonitorApplication(config).run()
+    history = None
+    if history_prometheus_url:
+        try:
+            history_url = validate_http_endpoint(history_prometheus_url)
+        except ValueError as error:
+            raise typer.BadParameter(str(error), param_hint="--history-prometheus-url") from None
+        if not web_port:
+            raise typer.BadParameter("Prometheus history requires a dashboard port.", param_hint="--web-port")
+        history = PrometheusHistoryConfig(history_url, history_prometheus_job, history_prometheus_lookback_hours)
+
+    if router_config is not None:
+        if not web_port:
+            raise typer.BadParameter("Named Router configurations require a dashboard port.", param_hint="--web-port")
+        try:
+            routers = load_router_configs(router_config, history_window=history_window, web_port=web_port)
+        except (OSError, ValueError) as error:
+            raise typer.BadParameter(str(error), param_hint="--router-config") from error
+    else:
+        config = MonitorConfig(
+            host=host,
+            port=port,
+            prom_port=prom_port,
+            endpoint=url or router_url,
+            metrics_endpoint=metrics_url,
+            admin_url=admin_url,
+            router_type=router_type,
+            worker_urls=tuple(url.rstrip("/") for url in worker or []),
+            api_key=api_key,
+            worker_api_key=worker_api_key,
+            interval=interval,
+            history_window=history_window,
+            web_port=web_port,
+            keepalive=keepalive,
+            auto_unregister=auto_unregister,
+            unregister_unavailable_after=unregister_unavailable_after,
+            keepalive_model=keepalive_model,
+            keepalive_interval=keepalive_interval,
+            keepalive_max_interval=keepalive_max_interval,
+            keepalive_max_tokens=keepalive_max_tokens,
+            keepalive_concurrency=keepalive_concurrency,
+            keepalive_prompt_words=keepalive_prompt_words,
+        )
+        routers = {"": config}
+
+    MonitorApplication(routers, history=history).run()
 
 
 def main():

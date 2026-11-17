@@ -75,9 +75,7 @@ def histogram_quantile(samples: list[dict], metric: str, q: float):
         if count >= target:
             if index == 0 or count <= previous_count:
                 return boundary
-            return previous_boundary + (boundary - previous_boundary) * (target - previous_count) / (
-                count - previous_count
-            )
+            return previous_boundary + (boundary - previous_boundary) * (target - previous_count) / (count - previous_count)
         previous_boundary, previous_count = boundary, count
     return max(buckets)
 
@@ -132,9 +130,7 @@ class CounterWindow:
             old = previous[2].get("sglang:" + name, {})
             if not current or current.keys() != old.keys():
                 return None, set()
-            if any(
-                value is None or old[key] is None or value < old[key] or value < 0 for key, value in current.items()
-            ):
+            if any(value is None or old[key] is None or value < old[key] or value < 0 for key, value in current.items()):
                 return None, set()
             return sum(value - old[key] for key, value in current.items()), current.keys()
 

@@ -2,8 +2,12 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
+from typing import Annotated, Literal
 
 import httpx
+from pydantic import AfterValidator, ConfigDict, Field, TypeAdapter
+from typing_extensions import Required, TypedDict
 
 
 class RouterType(str, Enum):
@@ -63,3 +67,75 @@ class MonitorConfig:
     @property
     def admin_endpoint(self) -> str:
         return self.admin_url.rstrip("/") if self.admin_url else self.router_url
+
+
+@dataclass(frozen=True)
+class PrometheusHistoryConfig:
+    url: str
+    job: str = "router-monitor"
+    lookback_hours: int = 24
+
+
+def validate_http_endpoint(value: str) -> str:
+    try:
+        url = httpx.URL(value)
+    except httpx.InvalidURL:
+        raise ValueError("Expected an HTTP(S) URL without credentials.") from None
+    if url.scheme not in {"http", "https"} or not url.host or url.userinfo:
+        raise ValueError("Expected an HTTP(S) URL without credentials.")
+    return value
+
+
+def _router_name(value: str) -> str:
+    if not value.strip():
+        raise ValueError("Router name must not be blank.")
+    return value
+
+
+HttpEndpoint = Annotated[str, AfterValidator(validate_http_endpoint)]
+RouterName = Annotated[str, AfterValidator(_router_name)]
+Port = Annotated[int, Field(ge=1, le=65535)]
+Interval = Annotated[float, Field(ge=0.1)]
+PositiveInt = Annotated[int, Field(ge=1)]
+
+
+class _RouterOptions(TypedDict, total=False):
+    endpoint: Required[HttpEndpoint]
+    port: Port
+    prom_port: Port
+    metrics_endpoint: HttpEndpoint | Literal[""]
+    admin_url: HttpEndpoint | Literal[""]
+    router_type: RouterType
+    worker_urls: list[HttpEndpoint]
+    api_key: str
+    worker_api_key: str
+    interval: Interval
+    keepalive: bool
+    auto_unregister: bool
+    unregister_unavailable_after: Annotated[float, Field(ge=0)]
+    keepalive_model: str
+    keepalive_interval: Interval
+    keepalive_max_interval: Interval
+    keepalive_max_tokens: PositiveInt
+    keepalive_concurrency: PositiveInt
+    keepalive_prompt_words: PositiveInt
+
+
+def load_router_configs(path: Path, *, history_window: float, web_port: int) -> dict[str, MonitorConfig]:
+    schema = TypeAdapter(
+        Annotated[dict[RouterName, _RouterOptions], Field(min_length=1)],
+        config=ConfigDict(strict=True, extra="forbid", allow_inf_nan=False, hide_input_in_errors=True),
+    )
+    entries = schema.validate_json(path.read_bytes())
+    configs = {}
+    for name, settings in entries.items():
+        worker_urls = tuple(url.rstrip("/") for url in settings.pop("worker_urls", ()))
+        settings.setdefault("unregister_unavailable_after", 0)
+        configs[name] = MonitorConfig(
+            host=httpx.URL(settings["endpoint"]).host,
+            history_window=history_window,
+            web_port=web_port,
+            worker_urls=worker_urls,
+            **settings,
+        )
+    return configs

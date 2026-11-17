@@ -9,23 +9,17 @@ def main(
     port: Annotated[int, typer.Option(envvar="ROUTER_PORT", min=1, max=65535, help="Router API port.")] = 2730,
     policy: Annotated[str, typer.Option(envvar="ROUTER_POLICY", help="Routing policy.")] = "round_robin",
     dp_aware: Annotated[bool, typer.Option(envvar="ROUTER_DP_AWARE", help="Route to individual DP ranks.")] = True,
-    prom_port: Annotated[
-        int, typer.Option(envvar="ROUTER_PROMETHEUS_PORT", min=1, max=65535, help="Prometheus port.")
-    ] = 29000,
+    prom_port: Annotated[int, typer.Option(envvar="ROUTER_PROMETHEUS_PORT", min=1, max=65535, help="Prometheus port.")] = 29000,
     health_check_timeout_secs: Annotated[
         int,
-        typer.Option(
-            "--health-timeout", envvar="ROUTER_HEALTH_CHECK_TIMEOUT_SECS", min=1, help="Health probe timeout."
-        ),
+        typer.Option("--health-timeout", envvar="ROUTER_HEALTH_CHECK_TIMEOUT_SECS", min=1, help="Health probe timeout."),
     ] = 30,
     queue_timeout_secs: Annotated[
         int, typer.Option("--queue-timeout", envvar="ROUTER_QUEUE_TIMEOUT_SECS", min=1, help="Queue timeout.")
     ] = 3600,
     request_timeout_secs: Annotated[
         int,
-        typer.Option(
-            "--request-timeout", envvar="ROUTER_REQUEST_TIMEOUT_SECS", min=1, help="Streaming request timeout."
-        ),
+        typer.Option("--request-timeout", envvar="ROUTER_REQUEST_TIMEOUT_SECS", min=1, help="Streaming request timeout."),
     ] = 43200,
 ):
     """Start SGLang Router; workers register separately. Timeouts are in seconds."""

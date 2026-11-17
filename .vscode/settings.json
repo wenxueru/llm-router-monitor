@@ -1,0 +1,13 @@
+{
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": true,
+        "diffEditor.ignoreTrimWhitespace": true
+    },
+    "[shellscript]": {
+        "editor.defaultFormatter": "bdq460.shell-formatter",
+        "editor.formatOnSave": true,
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4
+    }
+}
