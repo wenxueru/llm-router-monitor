@@ -201,4 +201,4 @@ ruff format --check router_monitor tests
 python -m build
 ```
 
-Build outputs are written to `dist/`. Install a wheel with `python -m pip install dist/llm_router_monitor-0.0.1-py3-none-any.whl`.
+Build outputs are written to `dist/`. Install a wheel with `python -m pip install dist/llm_router_monitor-0.0.2-py3-none-any.whl`.

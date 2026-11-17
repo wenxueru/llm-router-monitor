@@ -201,4 +201,4 @@ ruff format --check router_monitor tests
 python -m build
 ```
 
-构建产物位于 `dist/`，使用 `python -m pip install dist/llm_router_monitor-0.0.1-py3-none-any.whl` 安装 wheel。
+构建产物位于 `dist/`，使用 `python -m pip install dist/llm_router_monitor-0.0.2-py3-none-any.whl` 安装 wheel。
