@@ -254,6 +254,10 @@
         min-width: 0;
       }
       .banner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
         border: 1px solid var(--amber);
         background: var(--panel);
         border-radius: 9px;
@@ -261,6 +265,14 @@
         margin: 0 0 18px;
         color: var(--amber);
         font-size: 12px;
+      }
+      .banner button {
+        flex: none;
+        padding: 2px 8px;
+        border: 0;
+        color: inherit;
+        font-size: 20px;
+        line-height: 1;
       }
       .cards {
         display: grid;
@@ -653,7 +665,17 @@
           </details>
         </div>
       </header>
-      <div class="banner" id="notice" role="status" hidden></div>
+      <div class="banner" id="notice" hidden>
+        <span id="notice-text" role="status"></span>
+        <button
+          id="dismiss-notice"
+          type="button"
+          aria-label="Dismiss warning"
+          data-i18n-aria-label="Dismiss warning"
+          title="Dismiss warning"
+          data-i18n-title="Dismiss warning"
+        >×</button>
+      </div>
       <section
         class="cards"
         id="cards"
@@ -1170,6 +1192,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           Disconnected: "连接中断",
           "Stale snapshot": "快照已过期",
           "Partial connection": "部分连接可用",
+          "Dismiss warning": "关闭提示",
           Generation: "生成吞吐",
           "Running / queue": "运行 / 排队",
           "Prefix cache": "前缀缓存",
@@ -1400,6 +1423,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           let label = "Live",
             kind = "",
             note = "";
+          let noteValues;
           if (state.error) {
             label = "Disconnected";
             kind = "bad";
@@ -1410,7 +1434,8 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           } else if (stale) {
             label = "Stale snapshot";
             kind = "wait";
-            note = t("Data stale · {seconds} s", { seconds: number(age) });
+            note = "Data stale · {seconds} s";
+            noteValues = { seconds: number(age) };
           } else if (!state.snapshot.prom_ok || !state.snapshot.registry_ok) {
             label = "Partial connection";
             kind = "wait";
@@ -1426,8 +1451,16 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           $("updated").title = t("Snapshot age: {seconds} s", {
             seconds: number(age, 0),
           });
-          $("notice").hidden = !note;
-          $("notice").textContent = t(note);
+          const notice = $("notice");
+          if (notice.dataset.message !== note) {
+            notice.dataset.message = note;
+            notice.hidden = !note;
+          }
+          if (!notice.hidden) {
+            const message = $("notice-text");
+            const text = t(note, noteValues);
+            if (message.textContent !== text) message.textContent = text;
+          }
         }
         function renderCards() {
           const s = state.snapshot?.summary || {},
@@ -2335,6 +2368,9 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
         }
 
         function bindControls() {
+          $("dismiss-notice").onclick = () => {
+            $("notice").hidden = true;
+          };
           const settings = $("settings");
           document.addEventListener("click", (event) => {
             if (!settings.contains(event.target)) settings.open = false;

@@ -375,15 +375,38 @@ for (const [, plot] of plots) {
   assert.match(plot.innerHTML, /<svg/);
   assert.doesNotMatch(plot.innerHTML, /NaN/);
 }
-fixture.failed = 'history';
+fixture.snapshot.prom_ok = false;
 await tick();
-assert.equal($('status').textContent, 'Disconnected');
-assert.equal($('notice').textContent, 'History unavailable');
-assert.equal($('history-count').textContent, '2 samples');
-fixture.failed = 'all';
+assert.equal($('notice').hidden, false);
+$('dismiss-notice').trigger('click');
+assert.equal($('notice').hidden, true);
 await tick();
-assert.equal($('notice').textContent, 'Service unavailable');
-assert.match($('worker-rows').innerHTML, /warning:4563/);
+assert.equal($('notice').hidden, true);
+assert.equal($('status').textContent, 'Partial connection');
+$('language').value = 'zh-CN'; $('language').trigger('change');
+assert.equal($('dismiss-notice').attrs['aria-label'], '关闭提示');
+assert.equal($('notice').hidden, true);
+$('language').value = 'en'; $('language').trigger('change');
+fixture.snapshot.prom_ok = true;
+await tick();
+assert.equal($('status').textContent, 'Live');
+assert.equal($('notice').hidden, true);
+fixture.snapshot.prom_ok = false;
+await tick();
+assert.equal($('notice').hidden, false);
+for (const [failure, message] of [
+  ['history', 'History unavailable'], ['all', 'Service unavailable'],
+]) {
+  $('dismiss-notice').trigger('click');
+  fixture.failed = failure;
+  await tick();
+  assert.equal($('notice').hidden, false);
+  assert.equal($('status').textContent, 'Disconnected');
+  assert.equal($('notice-text').textContent, message);
+  assert.equal($('history-count').textContent, '2 samples');
+  assert.match($('worker-rows').innerHTML, /warning:4563/);
+}
+fixture.snapshot.prom_ok = true;
 fixture.failed = null;
 await tick();
 assert.equal($('status').textContent, 'Live');

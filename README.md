@@ -110,6 +110,7 @@ rmon http://127.0.0.1:8080 \
 - Trends use thin lines; zoom in to inspect dense observations. Zoom stays synchronized across charts. Use the legend to hide or show a model.
 - Missing values remain missing. TTFT/ITL connect valid observations; other charts bridge gaps up to 30 seconds with dashed lines. Collection outages and unavailable models stay disconnected.
 - Axes adapt to the data: nonnegative values, percentages within 0–100%, and integer count ticks.
+- Close a warning banner with × for its current occurrence on this page. A changed warning, recurrence after recovery, or page reload shows it again. The top status indicator stays visible.
 
 ### Metrics and history
 
