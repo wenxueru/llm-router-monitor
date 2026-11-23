@@ -2,6 +2,8 @@
 
 from collections import Counter, defaultdict
 
+from .sources import worker_host
+
 
 def _worker_row(url: str, workers: list[dict], model: str | None, detail: dict) -> dict:
     rank_health_known = all(worker.get("rank_health_known", True) for worker in workers)
@@ -127,11 +129,11 @@ def _summarize_rows(rows: list[dict]) -> dict:
     return summary
 
 
-def build_visualization(snapshot: dict, registry: list[dict]) -> dict:
+def summarize_workers(snapshot: dict, registry: list[dict]) -> dict:
     hosts = defaultdict(list)
     models = {url: model for model, urls in snapshot["by_model"].items() for url in urls}
     for worker in registry:
-        hosts[worker.get("url", "").split("@")[0]].append(worker)
+        hosts[worker_host(worker.get("url", ""))].append(worker)
     rows = [
         _worker_row(url, workers, models.get(url), snapshot["details"].get(url, {})) for url, workers in sorted(hosts.items())
     ]

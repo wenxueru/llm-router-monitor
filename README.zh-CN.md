@@ -61,9 +61,9 @@ rmon --router-config routers.local.json --web-port 8899 --history-window 120
 ```
 
 - 每个目标必填 HTTP(S) `endpoint`，URL 中不能嵌入凭据。可选字段：`router_type`、`worker_urls`、`metrics_endpoint`、`admin_url`、`api_key`、`worker_api_key` 和 `interval`。
-- 目标设置全部来自 JSON，不继承单 Router 的命令行或环境变量设置。`--web-port`、`--history-window` 和 `--history-prometheus-*` 设置由所有目标共享；端口不能为 `0`。
+- 每个目标的启动配置来自 JSON。`--web-port`、`--history-window` 和 `--history-prometheus-*` 由所有目标共享，Web 端口必须非零。
 - 在面板中切换目标，各目标独立采集并保存历史。`/`、`/data` 和 `/history` 支持 `?router=名称`，默认选择第一个目标。
-- JSON 模式默认关闭维护操作；按目标设置 `keepalive`、`auto_unregister` 或正数 `unregister_unavailable_after` 启用对应策略。
+- JSON 模式默认关闭维护操作；按目标设置 `keepalive`、`keepalive_unconditional`、`auto_unregister` 或正数 `unregister_unavailable_after` 启用对应策略。
 - 本地配置不要纳入 Git。Router 凭据使用 `api_key`，worker 凭据使用 `worker_api_key`。
 
 ## 支持的 Router
@@ -118,7 +118,8 @@ rmon http://127.0.0.1:8080 \
 - worker 模型查询失败时，面板使用该主机受管注册记录中唯一明确的模型名。缺失或冲突时归入「未知模型」。模型不匹配清理只依据 worker 查询成功返回的模型名。
 - 每次打开页面均使用服务端配置的窗口：默认 2 小时，最早从首条数据开始。窗口调整仅对当前页面生效。
 - 默认使用内存历史。配置 [Prometheus 持久历史](#prometheus-持久历史) 后，重启仍可查看已抓取的样本。
-- 刷新间隔、语言和主题会自动记忆。窗口按分钟、刷新按秒输入，均支持小数。
+- **设置 → 显示**可调整历史窗口、刷新频率、语言和主题。浏览器记住刷新频率、语言和主题。
+- 在本机或通过端口转发打开 **设置 → 保活**。点击**应用**即可更新所选 Router 的运行配置。Monitor 重启后恢复启动配置。
 
 ![分模型趋势 · 匿名化数据](docs/images/trends.jpg)
 
@@ -160,33 +161,46 @@ rmon http://router.example:2730 \
 - Grafana 或 PromQL 可以查询同一组指标，例如 `router_monitor_model_tps{job="router-monitor"}`。用 `router` 和 `model` 标签筛选。
 - 未配置 Prometheus 地址时，历史保留在内存中，重启后清空。启用后若历史查询失败，接口返回错误；`/data` 继续提供实时数据。
 
-## SGLang 维护
+## SGLang worker 维护
 
-以下策略仅作用于 SGLang 管理的注册记录。
+### 保活
 
-| 参数 | 默认值 | 行为 |
+保活默认关闭。可在面板中选择模式，也可通过启动参数配置。
+
+| 模式 | 启动参数 | 调度行为 |
 | --- | --- | --- |
-| `--unregister-unavailable-after 秒数` | `1800` | 所有 rank 持续不健康且空闲，最终可用性探测失败后注销；`0` 关闭清理 |
-| `--keepalive` | 关闭 | 向已观测为空闲的 worker 发送随机合成任务；失败后退避重试 |
-| `--auto-unregister` | 关闭 | 注销实际模型与注册模型不一致的记录 |
+| 自适应 | `--keepalive` | 按轮向空闲 worker 发保活。遇推理流量时取消，安静满 5 秒且 worker 空闲后恢复。 |
+| 无条件 | `--keepalive-unconditional` | 向已识别模型的 worker 持续发保活。请求成功后立即补位，有推理流量时照常运行。 |
 
-- 不可用清理仅接受探测中的连接失败、连接或读取超时、远端协议异常；HTTP 状态错误及其他探测失败仍保留 worker。
-- 恢复、重新注册或丢失注册表观测后，宽限期重新计时。
-- 注销只移除 Router 注册记录，不停止 worker 进程。删除请求被接受不代表记录已删除。
+```bash
+rmon http://127.0.0.1:2730 --keepalive-unconditional
+```
 
-### 保活负载
+- 命名 Router 可按目标设置 `"keepalive": true` 或 `"keepalive_unconditional": true`。
+- 两种模式的并发上限都取总并发配置和「符合条件的 worker 数 × 单 worker 上限」中的较小值。
+- 自适应模式从整轮结束后开始计时。Router 指标缺失或 worker 观测过期时暂停，失败的轮次使用指数退避。
+- 在 `/data` 的 `keepalive` 字段可查看状态、在途数、发出数和取消数。
 
-保活使用合成观测，随机选择摘要、故障排查、状态汇报或原因比较任务。每次请求的任务内容和采样温度都会变化。
-
-| 参数 | 默认值 | 每次请求或每轮的行为 |
+| 参数 | 默认值 | 用途 |
 | --- | --- | --- |
-| `--keepalive-prompt-words` | `512` | 合成上下文长度在配置字数的八分之一至上限之间随机变化，另加少量任务说明 |
-| `--keepalive-max-tokens` | `64` | 生成预算在配置上限的四分之一至上限之间随机变化，实际输出可能更短 |
-| `--keepalive-concurrency` | `8` | 每轮向每个空闲 worker 随机发送 1 至配置上限个请求；每个 Router 最多同时执行 32 个请求 |
+| `--keepalive-concurrency` | `8` | 单 worker 并发上限 |
+| `--keepalive-total-concurrency` | `32` | 每个 Router 的保活总并发上限 |
+| `--keepalive-interval` | `5` | 自适应模式的轮次间隔，或无条件模式的单请求失败重试间隔（秒） |
+| `--keepalive-traffic-poll-interval` | `1` | 自适应模式检测推理流量的间隔，单位为秒 |
+| `--keepalive-max-interval` | `60` | 自适应模式失败后的最大退避秒数 |
+| `--keepalive-prompt-words` | `512` | 合成上下文字数上限，随机长度为上限的八分之一至上限 |
+| `--keepalive-min-tokens` | `0` | 生成 token 下限，`0` 使用 worker 默认值 |
+| `--keepalive-max-tokens` | `64` | 生成预算上限，随机预算的下界为上限四分之一与生成下限的较大值 |
 
-长度与 token 下限向下取整，最少为 1。仅向已观测为空闲且模型已识别的 worker 发送保活请求。
+随机长度和预算下界向下取整，且至少为 1。`--keepalive-model` 可把保活限定在单个模型。
 
-启动 SGLang Router：安装提供 `RouterArgs` 的兼容 `sglang_router` 运行时，执行 `bash scripts/router.sh`。使用 `rmon --host 127.0.0.1` 监控，默认 API 端口为 `2730`，指标端口为 `29000`。
+### 注册清理
+
+- `--auto-unregister` 注销实际模型与注册模型不一致的记录，默认关闭。
+- `--unregister-unavailable-after` 设定不可用宽限期。所有 rank 持续不健康且空闲，复查失败后注销注册记录。单 Router 模式默认 1,800 秒，设为 `0` 关闭。
+- 复查使用连接失败、连接或读取超时、远端协议异常判定不可用。恢复、重新注册或注册表中断会重新计时。注销只作用于 Router 的注册记录。
+
+本地启动 SGLang Router 需要提供 `RouterArgs` 的兼容 `sglang_router`。运行 `bash scripts/router.sh`，API 默认端口为 `2730`，指标端口为 `29000`。
 
 ## 开发
 

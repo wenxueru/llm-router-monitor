@@ -16,22 +16,28 @@ flowchart TB
 
     subgraph monitor["Router Monitor · Python 进程"]
         app["MonitorApplication<br/>配置与生命周期"]
+        target["RouterTarget<br/>单 Router 生命周期"]
         collect["RouterCollector<br/>Router 适配、worker 指标与聚合"]
         store["SnapshotStore<br/>当前快照与近期历史"]
         web["Web 面板 · FastAPI 和 Jinja2"]
         rich["终端视图 · Rich"]
         history["Prometheus 指标导出与历史"]
-        maintenance["SGLang 维护 · 按配置启用"]
+        keepalive["KeepaliveWarmer · 保活"]
+        maintenance["AutoUnregister · 注册清理"]
 
-        app -->|每个 Router 启动一个循环| collect
+        app -->|每个 Router 运行一个目标| target
         app -->|配置 Web 端口时启动| web
-        collect -->|发布样本| store
-        collect -->|单目标模式下刷新| rich
+        target -->|采集观测| collect
+        target -->|发布观测| store
+        target -->|单目标模式下刷新| rich
         store -->|实时数据与近期样本| web
         store -->|提供待导出样本| history
         web -->|读取持久历史| history
         collect -->|核对注册记录| maintenance
-        store -->|提供 worker 空闲状态| maintenance
+        target -->|启动和关闭| keepalive
+        web -->|更新配置| keepalive
+        store -->|提供 worker 观测| keepalive
+        keepalive -->|发布调度状态| store
     end
 
     browser -->|"GET /、/data、/history"| web
@@ -39,7 +45,9 @@ flowchart TB
     collect -->|读取指标与注册记录| router
     collect -->|读取模型名与指标| workers
     maintenance -->|注销 worker| router
-    maintenance -->|发起探测与保活请求| workers
+    maintenance -->|探测| workers
+    keepalive -->|自适应模式读取推理计数| router
+    keepalive -->|发出保活请求| workers
     prometheus -->|"抓取 /metrics"| web
     history -->|查询已存样本| prometheus
 ```
@@ -50,19 +58,22 @@ flowchart TB
 
 | 模块 | 代码 | 职责 |
 | --- | --- | --- |
-| 应用组装 | `cli.py`、`config.py`、`app.py` | Typer 和 Pydantic 解析配置，`MonitorApplication` 组装目标并管理生命周期。 |
-| 数据采集 | `collectors.py`、`sources.py`、`http.py`、`worker.py` | `RouterCollector` 协调 `RouterSource` 和 `WorkerMetricsCollector`。Router 适配器统一注册记录和指标结构。HTTP 客户端复用连接并按来源使用凭据。 |
-| 指标聚合与状态 | `metrics.py`、`visualization.py`、`state.py` | 计算速率、延迟和按模型汇总的指标。每个 `RouterTarget` 持有配置和一个 `SnapshotStore`。 |
-| 展示 | `dashboard.py`、`templates/dashboard.html`、`terminal.py` | FastAPI 提供 Jinja2 页面和 JSON 数据，ECharts 渲染趋势，Rich 展示终端实时表格。 |
-| 持久历史 | `history.py` | 导出带时间戳的样本，从 Prometheus 读取历史观测。 |
-| 维护 | `maintenance.py` | `KeepaliveWarmer` 向空闲 worker 发送合成请求，`AutoUnregister` 执行 SGLang 注册清理规则。 |
+| 入口和配置 | `cli.py`、`config.py`、`app.py` | 解析启动配置，运行各 Router 目标及 Web 或终端界面。 |
+| 目标生命周期与状态 | `target.py`、`state.py` | 每个 `RouterTarget` 负责采集和保活，两者共用一个 `SnapshotStore`。 |
+| 采集 | `collection/` | `RouterSource` 读取 Router，`WorkerMetricsCollector` 读取模型与指标，`RouterCollector` 汇总注册记录、流量和模型指标。 |
+| 维护 | `maintenance/` | `KeepaliveControl` 热更新配置并管理保活任务。`AutoUnregister` 核对实际模型，复查持续不可用的注册。 |
+| 展示 | `presentation/`、`templates/` | 提供面板、JSON 路由和终端界面。Prometheus 适配器导出样本并查询持久历史。 |
 
 ## 运行流程
 
 1. **采集。** 并行读取 Router 指标和注册记录，再获取 worker 模型和推理指标。统一计算 worker 明细与模型汇总，将快照和带时间戳的样本发布到对应目标的存储。
 2. **展示。** 浏览器轮询 `/data` 和 `/history?n=N`，通过 `router=NAME` 选择目标，默认使用第一个。初始窗口为 120 分钟，单目标模式同时刷新终端。
 3. **保留历史。** Prometheus 抓取 `/metrics` 并保留采集时间戳，`/history` 合并已存观测与本地缓冲。导出保留零值、跳过缺失指标，并包含采集标记。历史查询失败返回 503，实时数据继续可用。
-4. **维护。** 各目标分别执行保活和 SGLang 注册清理策略。保活需要已观测的空闲状态和已识别模型。不可用清理等待所有受管 rank 在宽限期内持续不健康且空闲，再次探测后才注销。模型不匹配清理要求 worker 查询成功；注册名回退仅用于指标归类。
+4. **维护。** 自适应保活单独轮询推理计数，热更新时延续当前静默期。注册清理使用 worker 直接报告的模型名。
+
+保活模式和注册清理参数见 [SGLang worker 维护](../README.zh-CN.md#sglang-worker-维护)。
+
+通过反向代理公开面板时，在代理层将 `/settings/keepalive` 设为只读。本机和 SSH 转发入口可修改设置。
 
 ## 架构决策
 

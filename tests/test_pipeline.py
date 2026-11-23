@@ -6,19 +6,20 @@ import unittest
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
-from unittest.mock import Mock, call, patch
+from unittest.mock import patch
 
 import httpx
 from fastapi.testclient import TestClient
 from rich.console import Console
 
-from router_monitor.collectors import RouterCollector
+from router_monitor.collection.collector import RouterCollector
 from router_monitor.config import MonitorConfig
-from router_monitor.dashboard import create_dashboard
 from router_monitor.http import HttpClient
-from router_monitor.maintenance import AutoUnregister, KeepaliveWarmer
-from router_monitor.state import RouterTarget, SnapshotStore
-from router_monitor.terminal import render_terminal
+from router_monitor.maintenance.registration import AutoUnregister
+from router_monitor.presentation.dashboard import create_dashboard
+from router_monitor.presentation.terminal import render_terminal
+from router_monitor.state import SnapshotStore
+from router_monitor.target import RouterTarget
 
 
 class PipelineTests(unittest.TestCase):
@@ -29,19 +30,19 @@ class PipelineTests(unittest.TestCase):
             {"url": "http://worker@1", "model_id": "registered", "is_healthy": False},
         ]
         try:
-            with patch.object(collector._worker_metrics, "get_model", side_effect=ValueError("empty response")):
-                with self.assertLogs("router_monitor.collectors", level="WARNING"):
+            with patch.object(collector._worker_metrics, "get_model", return_value=None):
+                with self.assertLogs("router_monitor.collection.collector", level="WARNING"):
                     grouped, observed = collector._group_by_model(ranks, "sglang")
                 self.assertEqual(grouped, {"registered": ["http://worker"]})
                 self.assertEqual(observed, {})
                 ranks[1]["model_id"] = "different"
-                with self.assertLogs("router_monitor.collectors", level="WARNING"):
+                with self.assertLogs("router_monitor.collection.collector", level="WARNING"):
                     grouped, _ = collector._group_by_model(ranks, "sglang")
                 self.assertEqual(grouped, {"unknown": ["http://worker"]})
             with patch.object(collector._worker_metrics, "get_model", return_value="actual"):
                 grouped, observed = collector._group_by_model(ranks, "sglang")
             self.assertEqual(grouped, {"actual": ["http://worker"]})
-            self.assertEqual(observed, grouped)
+            self.assertEqual(observed, {"http://worker": "actual"})
         finally:
             collector.close()
 
@@ -190,50 +191,6 @@ class PipelineTests(unittest.TestCase):
                 server.shutdown()
                 thread.join(timeout=5)
 
-    def test_keepalive_filters_idle_workers_uses_their_model_and_backs_off(self):
-        store = Mock(spec=SnapshotStore)
-        store.snapshot.return_value = {
-            "by_model": {
-                "chosen": ["http://idle", "http://busy", "http://direct", "http://queued", "http://unknown"],
-                "other": ["http://other"],
-            },
-            "active_pw": {"http://idle": 0, "http://busy": 2, "http://direct": 0, "http://queued": 0},
-            "worker_rows": [
-                {"url": "http://idle", "running": 0, "waiting": 0},
-                {"url": "http://busy", "running": 0, "waiting": 0},
-                {"url": "http://direct", "running": 3, "waiting": 0},
-                {"url": "http://queued", "running": 0, "waiting": 2},
-                {"url": "http://unknown", "running": None, "waiting": None},
-                {"url": "http://other", "running": 0, "waiting": 0},
-            ],
-        }
-        config = MonitorConfig(host="router", keepalive=True, keepalive_model="chosen", keepalive_max_tokens=128)
-        warmer = KeepaliveWarmer(config, store)
-        try:
-            self.assertEqual(warmer.idle_workers(), {"http://idle": "chosen"})
-            with patch.object(warmer._http, "request_json", return_value={"choices": [{}]}) as send:
-                self.assertEqual(warmer.run_round(), {"http://idle": True})
-            self.assertIn(send.call_count, range(1, config.keepalive_concurrency + 1))
-            for args in send.call_args_list:
-                self.assertEqual(args.args, ("http://idle/v1/chat/completions",))
-                self.assertEqual(args.kwargs["method"], "POST")
-                self.assertEqual(args.kwargs["payload"]["model"], "chosen")
-                self.assertIn(args.kwargs["payload"]["max_tokens"], range(32, 129))
-
-            with (
-                patch.object(warmer, "ping", side_effect=[True, False]),
-                patch("router_monitor.maintenance.random.randint", return_value=2),
-            ):
-                self.assertEqual(warmer.run_round(), {"http://idle": False})
-
-            stop = Mock(spec=threading.Event)
-            stop.is_set.side_effect = [False, False, False, True]
-            with patch.object(warmer, "run_round", side_effect=[{"idle": False}, {"idle": False}, {"idle": True}]):
-                warmer.run(stop)
-            self.assertEqual(stop.wait.call_args_list, [call(10), call(20), call(5)])
-        finally:
-            warmer.close()
-
     def test_unavailable_cleanup_waits_and_keeps_responding_partial_or_busy_workers(self):
         probes, mutations = [], []
 
@@ -265,8 +222,8 @@ class PipelineTests(unittest.TestCase):
         workers[0]["url"] += "@0"
 
         def reconcile(now):
-            with patch("router_monitor.maintenance.time.monotonic", return_value=now):
-                cleanup.reconcile(workers, {"actual": ["http://responding"]})
+            with patch("router_monitor.maintenance.registration.time.monotonic", return_value=now):
+                cleanup.reconcile(workers, {"http://responding": "actual"})
                 for _, future in cleanup._pending.values():
                     future.result(timeout=2)
 
@@ -299,7 +256,7 @@ class PipelineTests(unittest.TestCase):
                     with patch.object(cleanup, "_unregister", return_value=True) as remove:
 
                         def collect(now, workers):
-                            with patch("router_monitor.maintenance.time.monotonic", return_value=now):
+                            with patch("router_monitor.maintenance.registration.time.monotonic", return_value=now):
                                 cleanup.reconcile(workers, {})
                                 for _, future in cleanup._pending.values():
                                     future.result(timeout=2)

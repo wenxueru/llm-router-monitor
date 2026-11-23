@@ -3,10 +3,7 @@
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
 from itertools import islice
-
-from .config import MonitorConfig
 
 
 class SnapshotStore:
@@ -14,6 +11,7 @@ class SnapshotStore:
         self._lock = threading.Lock()
         self._snapshot: dict = {}
         self._published_at = None
+        self._keepalive: dict | None = None
         self._history: deque[dict] = deque(maxlen=history_limit)
 
     def publish(self, snapshot: dict) -> None:
@@ -26,12 +24,27 @@ class SnapshotStore:
             self._published_at = time.monotonic()
             self._history.append(history_item)
 
+    def observation(self) -> tuple[dict, float | None]:
+        """Read the last published observation and its monotonic timestamp."""
+        with self._lock:
+            return self._snapshot, self._published_at
+
     def snapshot(self) -> dict:
         with self._lock:
             snapshot = dict(self._snapshot)
-            snapshot["age_seconds"] = max(0, time.monotonic() - self._published_at) if self._published_at else None
+            snapshot["age_seconds"] = time.monotonic() - self._published_at if self._published_at is not None else None
+            if self._keepalive is not None:
+                snapshot["keepalive"] = dict(self._keepalive)
         snapshot.setdefault("by_model", {})
         return snapshot
+
+    def publish_keepalive(self, status: str, inflight: int, dispatched: int, cancelled: int) -> None:
+        with self._lock:
+            self._keepalive = {"status": status, "inflight": inflight, "dispatched": dispatched, "cancelled": cancelled}
+
+    def clear_keepalive(self) -> None:
+        with self._lock:
+            self._keepalive = None
 
     def latest_sample(self) -> dict | None:
         with self._lock:
@@ -41,10 +54,6 @@ class SnapshotStore:
         with self._lock:
             if limit <= 0 or limit >= len(self._history):
                 return list(self._history)
-            return list(islice(reversed(self._history), limit))[::-1]
-
-
-@dataclass(frozen=True)
-class RouterTarget:
-    config: MonitorConfig
-    store: SnapshotStore = field(default_factory=SnapshotStore)
+            recent = list(islice(reversed(self._history), limit))
+        recent.reverse()
+        return recent

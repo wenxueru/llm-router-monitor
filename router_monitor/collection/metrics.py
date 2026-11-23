@@ -157,3 +157,53 @@ class CounterWindow:
         if requests is not None and errors is not None and requests > 0 and 0 <= errors <= requests:
             result["success_pct"] = (1 - errors / requests) * 100
         return result
+
+
+def normalize_inference(samples: list[dict], engine: str) -> list[dict]:
+    """Map equivalent meanings only; unsupported signals remain absent."""
+    if engine == "sglang":
+        return samples
+    aliases = {
+        "vllm:num_requests_running": "num_running_reqs",
+        "vllm:num_requests_waiting": "num_queue_reqs",
+        "vllm:kv_cache_usage_perc": "token_usage",
+        "vllm:gpu_cache_usage_perc": "token_usage",
+        "vllm:generation_tokens_total": "generation_tokens_total",
+        "vllm:prefix_cache_hits_total": "cached_tokens_total",
+        "vllm:prefix_cache_queries_total": "prompt_tokens_total",
+        "litellm_output_tokens_metric_total": "generation_tokens_total",
+        "litellm_input_tokens_metric_total": "prompt_tokens_total",
+        "litellm_input_cached_tokens_metric_total": "cached_tokens_total",
+        "litellm_proxy_total_requests_metric_total": "requests_total",
+        "litellm_proxy_failed_requests_metric_total": "errors_total",
+        "dynamo_frontend_output_tokens_total": "generation_tokens_total",
+    }
+    histograms = {
+        "vllm:time_to_first_token_seconds": "time_to_first_token_seconds",
+        "vllm:inter_token_latency_seconds": "inter_token_latency_seconds",
+        "litellm_llm_api_time_to_first_token_metric": "time_to_first_token_seconds",
+        "dynamo_frontend_time_to_first_token_seconds": "time_to_first_token_seconds",
+        "dynamo_frontend_inter_token_latency_seconds": "inter_token_latency_seconds",
+    }
+    prefix = {"vllm": "vllm:", "litellm": "litellm_", "dynamo": "dynamo_"}[engine]
+    result = []
+    names = {sample["name"] for sample in samples}
+    for sample in samples:
+        name = sample["name"]
+        if name == "vllm:gpu_cache_usage_perc" and "vllm:kv_cache_usage_perc" in names:
+            continue
+        if name != "process_start_time_seconds" and not name.startswith(prefix):
+            continue
+        canonical = aliases.get(name)
+        for source, target in histograms.items():
+            if name.startswith(source + "_"):
+                canonical = target + name[len(source) :]
+                break
+        if canonical:
+            labels = dict(sample["labels"])
+            if engine == "vllm":
+                labels["dp_rank"] = labels.get("engine", labels.get("engine_id", labels.get("dp_rank", "0")))
+            result.append({"name": "sglang:" + canonical, "labels": labels, "value": sample["value"]})
+        elif name == "process_start_time_seconds":
+            result.append(sample)
+    return result

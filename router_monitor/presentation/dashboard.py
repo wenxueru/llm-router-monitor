@@ -1,13 +1,49 @@
 """Web routes and dashboard rendering for configured Router targets."""
 
 from contextlib import asynccontextmanager
+from ipaddress import ip_address
 
 import httpx
+from fastapi import Request
 from jinja2 import Environment, PackageLoader, select_autoescape
 
-from .config import PrometheusHistoryConfig
-from .history import PrometheusHistory, metrics_registry
-from .state import RouterTarget
+from ..config import KeepaliveSettings, PrometheusHistoryConfig, RouterType
+from ..target import RouterTarget
+from .prometheus import PrometheusHistory, metrics_registry
+
+
+def _loopback(host: str | None) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _can_edit(request: Request) -> bool:
+    origin = request.headers.get("origin")
+    return (
+        request.client is not None
+        and _loopback(request.client.host)
+        and _loopback(request.url.hostname)
+        and (origin is None or origin == f"{request.url.scheme}://{request.url.netloc}")
+    )
+
+
+def _keepalive_supported(target: RouterTarget, snapshot: dict) -> bool:
+    return (
+        target.config.router_type in (RouterType.auto, RouterType.sglang) and snapshot.get("router_type", "sglang") == "sglang"
+    )
+
+
+def _keepalive_view(settings: KeepaliveSettings, snapshot: dict, *, supported: bool, local: bool) -> dict:
+    return {
+        "settings": settings,
+        "models": [model for model in snapshot.get("by_model", {}) if model != "unknown"],
+        "supported": supported,
+        "editable": local and (supported or settings.mode != "off"),
+    }
 
 
 def create_dashboard(
@@ -66,7 +102,27 @@ def create_dashboard(
         _, target = select_target(router)
         return JSONResponse(target.store.snapshot())
 
-    metrics = metrics_registry(targets)
+    @app.get("/settings/keepalive")
+    def read_keepalive(request: Request, router: str | None = None):
+        _, target = select_target(router)
+        snapshot, _ = target.store.observation()
+        settings = target.keepalive.settings()
+        return _keepalive_view(settings, snapshot, supported=_keepalive_supported(target, snapshot), local=_can_edit(request))
+
+    @app.put("/settings/keepalive")
+    def update_keepalive(request: Request, settings: KeepaliveSettings, router: str | None = None):
+        _, target = select_target(router)
+        snapshot, _ = target.store.observation()
+        supported = _keepalive_supported(target, snapshot)
+        if not _can_edit(request) or (not supported and settings.mode != "off"):
+            raise HTTPException(403, "Keepalive can be edited from a local SGLang dashboard.")
+        try:
+            target.keepalive.update(settings)
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        return _keepalive_view(settings, snapshot, supported=supported, local=True)
+
+    metrics = metrics_registry({name: target.store for name, target in targets.items()})
 
     @app.get("/metrics")
     def export_metrics():

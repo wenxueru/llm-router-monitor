@@ -61,9 +61,9 @@ rmon --router-config routers.local.json --web-port 8899 --history-window 120
 ```
 
 - Each target requires an HTTP(S) `endpoint` without embedded credentials. Optional fields: `router_type`, `worker_urls`, `metrics_endpoint`, `admin_url`, `api_key`, `worker_api_key`, and `interval`.
-- JSON supplies all target settings; single-Router CLI and environment settings do not carry over. `--web-port`, `--history-window`, and `--history-prometheus-*` settings are shared; the port must be nonzero.
+- JSON supplies each target's startup configuration. `--web-port`, `--history-window`, and `--history-prometheus-*` settings are shared. The web port must be nonzero.
 - Switch targets in the dashboard; each has independent collection and history. `/`, `/data`, and `/history` accept `?router=NAME` and default to the first target.
-- Maintenance defaults to off in JSON mode. Enable `keepalive`, `auto_unregister`, or a positive `unregister_unavailable_after` per target.
+- Maintenance defaults to off in JSON mode. Enable `keepalive`, `keepalive_unconditional`, `auto_unregister`, or a positive `unregister_unavailable_after` per target.
 - Keep local configuration outside Git. Use `api_key` for Router credentials and `worker_api_key` for worker credentials.
 
 ## Supported Routers
@@ -118,7 +118,8 @@ rmon http://127.0.0.1:8080 \
 - If a worker model lookup fails, the dashboard uses the single known model name shared by its managed Router registrations. Missing or conflicting names leave the worker under “Unknown model”. Only a successful worker lookup can establish a model mismatch.
 - Each page load uses the server's configured window: 2 hours by default, starting no earlier than available data. Window adjustments apply only to the current page.
 - History is in memory by default. Set up [Prometheus history](#prometheus-history) to preserve scraped samples across restarts.
-- Refresh interval, language, and theme are remembered. Window and refresh inputs accept decimals, in minutes and seconds respectively.
+- **Settings → Display** controls the history window, refresh interval, language, and theme. The browser remembers the last three.
+- Open **Settings → Keepalive** on a local or port-forwarded dashboard. **Apply** replaces the selected Router's running keepalive settings. Restarting the Monitor reloads its startup configuration.
 
 ![Per-model trends — anonymized data](https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/trends.jpg)
 
@@ -160,33 +161,46 @@ The initial page window remains 120 minutes. These options also apply with `--ro
 - Grafana or PromQL can query the same series, for example `router_monitor_model_tps{job="router-monitor"}`. Use the `router` and `model` labels for filtering.
 - Without a Prometheus URL, history stays in memory until restart. When configured, a failed history query returns an error; live data continues through `/data`.
 
-## SGLang maintenance
+## SGLang worker maintenance
 
-These policies apply to SGLang-managed registrations only.
+### Keepalive
 
-| Option | Default | Action |
+Keepalive is off by default. Choose a mode in the dashboard or at startup.
+
+| Mode | Option | Scheduling |
 | --- | --- | --- |
-| `--unregister-unavailable-after SECONDS` | `1800` | Unregister a host after all ranks stay unhealthy and idle, followed by a failed availability probe; `0` disables cleanup |
-| `--keepalive` | Off | Send varied synthetic tasks to observed idle workers; back off after failures |
-| `--auto-unregister` | Off | Remove registrations whose model differs from the serving model |
+| Adaptive | `--keepalive` | Warm idle workers in rounds. Inference traffic cancels keepalive. Resume after five quiet seconds once workers are idle. |
+| Unconditional | `--keepalive-unconditional` | Refill each successful request immediately, including during inference traffic. Target workers with a known model. |
 
-- Availability cleanup requires a connection error, a connection/read timeout, or a remote protocol error from the probe. HTTP status errors and other probe failures retain the worker.
-- Recovery, re-registration, or lost registry visibility resets the grace period.
-- Deregistration removes Router records, not worker processes. An accepted removal request does not confirm deletion.
+```bash
+rmon http://127.0.0.1:2730 --keepalive-unconditional
+```
 
-### Keepalive workload
+- Set `"keepalive": true` or `"keepalive_unconditional": true` on a named Router to select its mode.
+- Both modes cap concurrency at the lower of the Router limit and the eligible worker count × the per-worker limit.
+- Adaptive mode starts its interval after a round finishes and backs off on failures. Missing Router metrics or stale worker observations pause dispatch.
+- To inspect a running scheduler, read `keepalive` in `/data` for state, in-flight requests, dispatches, and cancellations.
 
-Keepalive randomly chooses summarization, troubleshooting, status-writing, or comparison tasks using synthetic observations. Task content and sampling temperature vary between requests.
-
-| Option | Default | Per-request or per-round behavior |
+| Option | Default | Purpose |
 | --- | --- | --- |
-| `--keepalive-prompt-words` | `512` | Synthetic context length varies from one eighth to the configured word limit; task instructions add a small overhead |
-| `--keepalive-max-tokens` | `64` | Generation budget varies from one quarter to the configured limit; actual output may be shorter |
-| `--keepalive-concurrency` | `8` | Each idle worker receives a random 1 to this many requests per round; at most 32 requests run concurrently per Router |
+| `--keepalive-concurrency` | `8` | Concurrent requests per worker |
+| `--keepalive-total-concurrency` | `32` | Concurrent keepalive requests across a Router |
+| `--keepalive-interval` | `5` | Seconds between adaptive rounds or before retrying a failed unconditional request |
+| `--keepalive-traffic-poll-interval` | `1` | Seconds between adaptive mode traffic polls |
+| `--keepalive-max-interval` | `60` | Adaptive mode's maximum retry delay in seconds |
+| `--keepalive-prompt-words` | `512` | Synthetic context word limit, with random lengths from one eighth to the limit |
+| `--keepalive-min-tokens` | `0` | Minimum generated tokens, with `0` using the worker default |
+| `--keepalive-max-tokens` | `64` | Generation budget limit. The random budget starts at one quarter of the limit, or the configured minimum if higher |
 
-Length and token lower bounds round down, with a minimum of 1. Only workers with observed idle load and an identified model receive keepalive requests.
+Random length and budget lower bounds round down and use a minimum of 1. Use `--keepalive-model` to target one model.
 
-To launch SGLang Router, install a compatible `sglang_router` runtime exposing `RouterArgs`, then run `bash scripts/router.sh`. Monitor it with `rmon --host 127.0.0.1` (API `2730`, metrics `29000`).
+### Registration cleanup
+
+- `--auto-unregister` removes registrations when a worker reports a different model. It defaults to off.
+- `--unregister-unavailable-after` sets the grace period. Cleanup requires all ranks to stay unhealthy and idle and a final probe to fail. The single-Router default is 1,800 seconds. Use `0` to turn off unavailable cleanup.
+- The final probe recognizes connection failures, connection or read timeouts, and remote protocol errors. Recovery, re-registration, or missing registry observations reset the timer. Cleanup removes Router registrations.
+
+Run `bash scripts/router.sh` with a compatible `sglang_router` runtime exposing `RouterArgs` to start a local SGLang Router. The default API port is `2730` and the metrics port is `29000`.
 
 ## Development
 

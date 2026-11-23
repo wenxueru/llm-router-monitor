@@ -1,12 +1,13 @@
 """Immutable monitor settings."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
+from math import isfinite
 from pathlib import Path
 from typing import Annotated, Literal
 
 import httpx
-from pydantic import AfterValidator, ConfigDict, Field, TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
 from typing_extensions import Required, TypedDict
 
 
@@ -41,14 +42,30 @@ class MonitorConfig:
     history_window: float = 120.0
     web_port: int = 8899
     keepalive: bool = False
+    keepalive_unconditional: bool = False
     auto_unregister: bool = False
     unregister_unavailable_after: float = 1800
     keepalive_model: str = ""
     keepalive_interval: float = 5.0
     keepalive_max_interval: float = 60.0
+    keepalive_traffic_poll_interval: float = 1.0
+    keepalive_min_tokens: int = 0
     keepalive_max_tokens: int = 64
     keepalive_concurrency: int = 8
+    keepalive_total_concurrency: int = 32
     keepalive_prompt_words: int = 512
+
+    def __post_init__(self) -> None:
+        if not all(map(isfinite, (self.keepalive_interval, self.keepalive_max_interval, self.keepalive_traffic_poll_interval))):
+            raise ValueError("Keepalive intervals must be finite.")
+        if self.keepalive_min_tokens > self.keepalive_max_tokens:
+            raise ValueError("keepalive_min_tokens must be at most keepalive_max_tokens.")
+
+    @property
+    def keepalive_mode(self) -> Literal["off", "adaptive", "unconditional"]:
+        if self.keepalive_unconditional:
+            return "unconditional"
+        return "adaptive" if self.keepalive else "off"
 
     @property
     def router_url(self) -> str:
@@ -97,6 +114,33 @@ RouterName = Annotated[str, AfterValidator(_router_name)]
 Port = Annotated[int, Field(ge=1, le=65535)]
 Interval = Annotated[float, Field(ge=0.1)]
 PositiveInt = Annotated[int, Field(ge=1)]
+NonNegativeInt = Annotated[int, Field(ge=0)]
+
+
+class KeepaliveSettings(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", allow_inf_nan=False)
+
+    mode: Literal["off", "adaptive", "unconditional"]
+    keepalive_model: str
+    keepalive_interval: Interval
+    keepalive_max_interval: Interval
+    keepalive_traffic_poll_interval: Interval
+    keepalive_min_tokens: NonNegativeInt
+    keepalive_max_tokens: PositiveInt
+    keepalive_concurrency: PositiveInt
+    keepalive_total_concurrency: PositiveInt
+    keepalive_prompt_words: PositiveInt
+
+    @classmethod
+    def from_config(cls, config: MonitorConfig) -> "KeepaliveSettings":
+        values = {name: getattr(config, name) for name in cls.model_fields if name != "mode"}
+        return cls(mode=config.keepalive_mode, **values)
+
+    def apply(self, config: MonitorConfig) -> MonitorConfig:
+        values = self.model_dump(exclude={"mode"})
+        if self.mode != config.keepalive_mode:
+            values.update(keepalive=self.mode == "adaptive", keepalive_unconditional=self.mode == "unconditional")
+        return replace(config, **values)
 
 
 class _RouterOptions(TypedDict, total=False):
@@ -111,13 +155,17 @@ class _RouterOptions(TypedDict, total=False):
     worker_api_key: str
     interval: Interval
     keepalive: bool
+    keepalive_unconditional: bool
     auto_unregister: bool
     unregister_unavailable_after: Annotated[float, Field(ge=0)]
     keepalive_model: str
     keepalive_interval: Interval
     keepalive_max_interval: Interval
+    keepalive_traffic_poll_interval: Interval
+    keepalive_min_tokens: NonNegativeInt
     keepalive_max_tokens: PositiveInt
     keepalive_concurrency: PositiveInt
+    keepalive_total_concurrency: PositiveInt
     keepalive_prompt_words: PositiveInt
 
 
@@ -131,11 +179,14 @@ def load_router_configs(path: Path, *, history_window: float, web_port: int) -> 
     for name, settings in entries.items():
         worker_urls = tuple(url.rstrip("/") for url in settings.pop("worker_urls", ()))
         settings.setdefault("unregister_unavailable_after", 0)
-        configs[name] = MonitorConfig(
-            host=httpx.URL(settings["endpoint"]).host,
-            history_window=history_window,
-            web_port=web_port,
-            worker_urls=worker_urls,
-            **settings,
-        )
+        try:
+            configs[name] = MonitorConfig(
+                host=httpx.URL(settings["endpoint"]).host,
+                history_window=history_window,
+                web_port=web_port,
+                worker_urls=worker_urls,
+                **settings,
+            )
+        except ValueError as error:
+            raise ValueError(f"Router {name!r}: {error}") from error
     return configs

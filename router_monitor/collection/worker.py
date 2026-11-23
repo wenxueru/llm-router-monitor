@@ -6,28 +6,40 @@ import math
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from .http import HttpClient
-from .metrics import CounterWindow, MovingAverage, TokenDeltaWindow, gauge_values, histogram_quantile, metric_samples
-from .sources import normalize_inference
+import httpx
+
+from ..http import HttpClient
+from .metrics import (
+    CounterWindow,
+    MovingAverage,
+    TokenDeltaWindow,
+    gauge_values,
+    histogram_quantile,
+    metric_samples,
+    normalize_inference,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class WorkerMetricsCollector:
-    def __init__(self, interval: float, api_key: str = ""):
+    def __init__(self, interval: float, api_key: str = "", *, transport: httpx.BaseTransport | None = None):
         self._pool = ThreadPoolExecutor(max_workers=8)
-        self._http = HttpClient(token=api_key)
+        self._http = HttpClient(token=api_key, transport=transport)
         self._model_cache: dict[str, str] = {}
         self._counter_window = CounterWindow()
         self._throughput = MovingAverage(interval)
         self._hit_token_window = TokenDeltaWindow(60)
 
-    def get_model(self, worker_url: str, *, refresh: bool = False) -> str:
+    def get_model(self, worker_url: str, *, refresh: bool = False) -> str | None:
         if refresh or worker_url not in self._model_cache:
-            names = [m["id"] for m in json.loads(self._http.fetch(f"{worker_url}/v1/models")).get("data", [])]
-            if not names:
-                raise ValueError("no models")
-            self._model_cache[worker_url] = names[0]
+            try:
+                model = json.loads(self._http.fetch(f"{worker_url}/v1/models"))["data"][0]["id"]
+            except (ValueError, TypeError, KeyError, IndexError):
+                return None
+            if not isinstance(model, str) or not model:
+                return None
+            self._model_cache[worker_url] = model
         return self._model_cache[worker_url]
 
     def _fetch_detail(self, base_url: str) -> dict:
@@ -105,7 +117,7 @@ class WorkerMetricsCollector:
         if ttft is not None:
             detail["ttft_p50_ms"] = ttft * 1000
 
-        ranks = sorted(per_rank, key=lambda rank: int(rank) if rank.isdigit() else rank)
+        ranks = sorted(per_rank, key=lambda rank: (0, int(rank)) if rank.isdecimal() else (1, rank))
         for name, aggregate in [
             ("running", sum),
             ("waiting", sum),
@@ -164,7 +176,7 @@ class WorkerMetricsCollector:
             try:
                 details[url] = future.result()
             except Exception:
-                logger.warning("Failed to collect worker metrics from %s", url, exc_info=True)
+                logger.exception("Failed to collect worker metrics from %s", url)
         return details
 
     def close(self) -> None:

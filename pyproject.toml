@@ -34,8 +34,11 @@ router-monitor = "router_monitor.cli:main"
 sglang-router-monitor = "router_monitor.cli:main"
 
 [tool.setuptools]
-packages = ["router_monitor"]
 include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["router_monitor", "router_monitor.*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 router_monitor = ["templates/*.html"]

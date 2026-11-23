@@ -1,18 +1,14 @@
 """Run the collectors and presentations for a configured set of Routers."""
 
-import logging
 import math
 import threading
 from contextlib import nullcontext
 
-from .collectors import RouterCollector
 from .config import MonitorConfig, PrometheusHistoryConfig
-from .dashboard import create_dashboard
-from .maintenance import KeepaliveWarmer
-from .state import RouterTarget, SnapshotStore
-from .terminal import terminal_updates
-
-logger = logging.getLogger(__name__)
+from .presentation.dashboard import create_dashboard
+from .presentation.terminal import terminal_updates
+from .state import SnapshotStore
+from .target import RouterTarget
 
 
 class MonitorApplication:
@@ -24,53 +20,32 @@ class MonitorApplication:
             for name, config in routers.items()
         }
 
-    def _collect_loop(self, target: RouterTarget, collector: RouterCollector, stop: threading.Event) -> None:
-        config = target.config
-        terminal = terminal_updates(config) if len(self.targets) == 1 else nullcontext()
+    def _run_target(self, target: RouterTarget) -> None:
+        terminal = terminal_updates(target.config) if len(self.targets) == 1 else nullcontext()
         with terminal as update:
-            while not stop.is_set():
-                try:
-                    snapshot = collector.collect()
-                    target.store.publish(snapshot)
-                    if update:
-                        update(snapshot)
-                except Exception:
-                    logger.exception("Monitor collection cycle failed for %s", config.router_url)
-                stop.wait(config.interval)
+            target.run(update)
 
     def run(self) -> None:
-        stop = threading.Event()
-        collectors = []
         threads = []
-
-        def start(target, *args):
-            thread = threading.Thread(target=target, args=args, daemon=True)
-            thread.start()
-            threads.append(thread)
-
         try:
+            if not self.web_port:
+                self._run_target(next(iter(self.targets.values())))
+                return
+
             for target in self.targets.values():
-                config = target.config
-                collector = RouterCollector(config)
-                collectors.append(collector)
-                if config.keepalive:
-                    start(KeepaliveWarmer(config, target.store).run, stop)
-                if self.web_port:
-                    start(self._collect_loop, target, collector, stop)
-                else:
-                    self._collect_loop(target, collector, stop)
+                thread = threading.Thread(target=self._run_target, args=(target,), daemon=True)
+                thread.start()
+                threads.append(thread)
 
-            if self.web_port:
-                import uvicorn
+            import uvicorn
 
-                dashboard = create_dashboard(self.targets, history_config=self.history)
-                print(f"[Monitor] Web UI → http://0.0.0.0:{self.web_port}")
-                uvicorn.run(dashboard, host="0.0.0.0", port=self.web_port, log_level="error")
+            dashboard = create_dashboard(self.targets, history_config=self.history)
+            print(f"[Monitor] Web UI → http://0.0.0.0:{self.web_port}")
+            uvicorn.run(dashboard, host="0.0.0.0", port=self.web_port, log_level="error", proxy_headers=False)
         except KeyboardInterrupt:
             pass
         finally:
-            stop.set()
+            for target in self.targets.values():
+                target.stop()
             for thread in threads:
                 thread.join()
-            for collector in collectors:
-                collector.close()

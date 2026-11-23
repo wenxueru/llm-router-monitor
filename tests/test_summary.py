@@ -2,10 +2,10 @@
 
 import unittest
 
-from router_monitor.visualization import build_visualization
+from router_monitor.collection.summary import summarize_workers
 
 
-class VisualizationTests(unittest.TestCase):
+class SummaryTests(unittest.TestCase):
     def test_partial_dp_loads_and_unhealthy_hosts_are_visible(self):
         registry = [
             {"url": "http://a@0", "is_healthy": True, "load": 1},
@@ -25,7 +25,7 @@ class VisualizationTests(unittest.TestCase):
                 },
             },
         }
-        result = build_visualization(snapshot, registry)
+        result = summarize_workers(snapshot, registry)
         summary = result["summary"]
         self.assertEqual(len(result["worker_rows"]), 2)
         self.assertIsNone(summary["prefill_tokens"])
@@ -79,7 +79,7 @@ class VisualizationTests(unittest.TestCase):
                 },
             },
         }
-        result = build_visualization(snapshot, registry)
+        result = summarize_workers(snapshot, registry)
         a, b, missing = (result["by_model_stats"][name] for name in ("a", "b", "missing"))
         self.assertAlmostEqual(result["summary"]["ttft_mean_ms"], (100 + 400 * 3 + 900 * 100) / 104)
         self.assertEqual(result["summary"]["hit_pct"], 70)
@@ -99,7 +99,7 @@ class VisualizationTests(unittest.TestCase):
             self.assertIsNone(missing[field], field)
 
     def test_lost_registry_does_not_look_like_an_empty_healthy_fleet(self):
-        result = build_visualization({"by_model": {}, "details": {}, "registry_ok": False}, [])
+        result = summarize_workers({"by_model": {}, "details": {}, "registry_ok": False}, [])
         self.assertIsNone(result["summary"]["workers"])
         self.assertIsNone(result["summary"]["unhealthy_workers"])
 
@@ -114,6 +114,6 @@ class VisualizationTests(unittest.TestCase):
                 }
             },
         }
-        result = build_visualization(snapshot, registry)
+        result = summarize_workers(snapshot, registry)
         self.assertEqual(result["summary"]["running"], 3)
         self.assertEqual(result["summary"]["waiting"], 2)

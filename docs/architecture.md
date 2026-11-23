@@ -16,22 +16,28 @@ flowchart TB
 
     subgraph monitor["Router Monitor · Python process"]
         app["MonitorApplication<br/>Configuration and lifecycle"]
+        target["RouterTarget<br/>Per-Router lifecycle"]
         collect["RouterCollector<br/>Router adapters, worker metrics, aggregation"]
         store["SnapshotStore<br/>Current snapshot and recent history"]
         web["Web dashboard · FastAPI and Jinja2"]
         rich["Terminal view · Rich"]
         history["Prometheus export and history"]
-        maintenance["SGLang maintenance · when configured"]
+        keepalive["KeepaliveWarmer · warming"]
+        maintenance["AutoUnregister · registration cleanup"]
 
-        app -->|starts a loop per Router| collect
+        app -->|runs one per Router| target
         app -->|starts with a web port| web
-        collect -->|publishes samples| store
-        collect -->|updates in single-target mode| rich
+        target -->|collects observations| collect
+        target -->|publishes observations| store
+        target -->|updates in single-target mode| rich
         store -->|live data and recent samples| web
         store -->|samples to export| history
         web -->|loads persistent history| history
         collect -->|reconciles registrations| maintenance
-        store -->|idle-worker observations| maintenance
+        target -->|starts and stops| keepalive
+        web -->|updates settings| keepalive
+        store -->|worker observations| keepalive
+        keepalive -->|publishes scheduling state| store
     end
 
     browser -->|"GET /, /data, /history"| web
@@ -39,7 +45,9 @@ flowchart TB
     collect -->|reads metrics and registrations| router
     collect -->|reads model names and metrics| workers
     maintenance -->|deregisters workers| router
-    maintenance -->|probes and sends keepalive requests| workers
+    maintenance -->|probes| workers
+    keepalive -->|polls inference counters in adaptive mode| router
+    keepalive -->|sends synthetic requests| workers
     prometheus -->|"scrapes /metrics"| web
     history -->|queries stored samples| prometheus
 ```
@@ -50,19 +58,22 @@ Each Router owns its configuration, credentials, collector, maintenance state, a
 
 | Area | Code | Responsibility |
 | --- | --- | --- |
-| Composition | `cli.py`, `config.py`, `app.py` | Parse configuration with Typer and Pydantic. `MonitorApplication` assembles targets and manages their lifecycles. |
-| Collection | `collectors.py`, `sources.py`, `http.py`, `worker.py` | `RouterCollector` coordinates `RouterSource` and `WorkerMetricsCollector`. Router adapters normalize registrations and metrics. HTTP clients reuse connections and scope credentials. |
-| Aggregation and state | `metrics.py`, `visualization.py`, `state.py` | Compute rates, latency, and per-model summaries. Each `RouterTarget` pairs configuration with a `SnapshotStore`. |
-| Presentation | `dashboard.py`, `templates/dashboard.html`, `terminal.py` | Serve a Jinja2 page and JSON data through FastAPI, plot trends with ECharts, and display live tables with Rich. |
-| Persistent history | `history.py` | Export timestamped samples and read historical observations from Prometheus. |
-| Maintenance | `maintenance.py` | `KeepaliveWarmer` sends synthetic traffic to idle workers. `AutoUnregister` applies SGLang registration cleanup rules. |
+| Entry and configuration | `cli.py`, `config.py`, `app.py` | Parse startup settings and run targets with the web dashboard or terminal. |
+| Target lifecycle and state | `target.py`, `state.py` | Each `RouterTarget` runs a collector and keepalive controller against one `SnapshotStore`. |
+| Collection | `collection/` | `RouterSource` owns Router reads. `WorkerMetricsCollector` reads models and metrics. `RouterCollector` combines discovery, traffic, and per-model summaries. |
+| Maintenance | `maintenance/` | `KeepaliveControl` applies live settings and runs the warmer. `AutoUnregister` reconciles serving models and verifies unreachable registrations. |
+| Presentation | `presentation/`, `templates/` | Serve the dashboard, JSON routes, and terminal. The Prometheus adapter exports stored samples and retrieves persisted history. |
 
 ## Runtime flows
 
 1. **Collect.** Read Router metrics and registrations concurrently, then gather worker models and inference metrics. Aggregate worker details and per-model summaries once; publish the snapshot and timestamped sample to that target's store.
 2. **Display.** The browser polls `/data` and `/history?n=N`, selecting a target through `router=NAME` (the first target by default). The initial window is 120 minutes. Single-target mode also updates the terminal.
 3. **Retain history.** Prometheus scrapes `/metrics` with collection timestamps. `/history` merges stored observations with the local buffer. Export preserves zeros, omits missing metrics, and includes a collection marker. History-query failures return 503 without blocking live data.
-4. **Maintain.** Per-target policies perform keepalive and SGLang registration cleanup. Keepalive needs observed idle load and an identified model. Unavailable-host cleanup waits for every managed rank to remain unhealthy and idle through the grace period, then probes again. Model-mismatch cleanup requires successful worker discovery; registration-name fallback is only for metric attribution.
+4. **Maintain.** Adaptive keepalive polls inference counters independently and carries its quiet period across settings updates. Registration cleanup uses model names reported directly by workers.
+
+See [SGLang worker maintenance](../README.md#sglang-worker-maintenance) for modes and cleanup options.
+
+For public reverse-proxy deployments, expose `/settings/keepalive` as read-only at the proxy. Local and SSH-forwarded dashboards support writes.
 
 ## Design decisions
 

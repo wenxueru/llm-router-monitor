@@ -3,8 +3,8 @@
 import unittest
 from unittest.mock import patch
 
-from router_monitor.metrics import CounterWindow, TokenDeltaWindow, gauge_values, histogram_quantile, metric_samples
-from router_monitor.worker import WorkerMetricsCollector
+from router_monitor.collection.metrics import CounterWindow, TokenDeltaWindow, gauge_values, histogram_quantile, metric_samples
+from router_monitor.collection.worker import WorkerMetricsCollector
 
 
 class MetricsTests(unittest.TestCase):

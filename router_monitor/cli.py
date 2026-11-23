@@ -72,7 +72,14 @@ def monitor(
     keepalive: Annotated[
         bool,
         typer.Option(help="Send inference requests to idle SGLang-registered workers.", rich_help_panel="Worker maintenance"),
-    ] = False,
+    ] = MonitorConfig.keepalive,
+    keepalive_unconditional: Annotated[
+        bool,
+        typer.Option(
+            help="Maintain concurrent SGLang keepalive requests regardless of worker load or inference traffic.",
+            rich_help_panel="Worker maintenance",
+        ),
+    ] = MonitorConfig.keepalive_unconditional,
     auto_unregister: Annotated[
         bool,
         typer.Option(
@@ -95,18 +102,39 @@ def monitor(
     keepalive_interval: Annotated[
         float,
         typer.Option(
-            envvar="KEEPALIVE_INTERVAL", min=0.1, help="Round interval in seconds.", rich_help_panel="Keepalive tuning"
+            envvar="KEEPALIVE_INTERVAL",
+            min=0.1,
+            help="Seconds between adaptive rounds or before retrying a failed unconditional request.",
+            rich_help_panel="Keepalive tuning",
         ),
-    ] = 5,
+    ] = MonitorConfig.keepalive_interval,
     keepalive_max_interval: Annotated[
         float,
         typer.Option(
             envvar="KEEPALIVE_MAX_INTERVAL",
             min=0.1,
-            help="Maximum retry backoff in seconds.",
+            help="Maximum retry backoff in seconds in adaptive mode.",
             rich_help_panel="Keepalive tuning",
         ),
-    ] = 60,
+    ] = MonitorConfig.keepalive_max_interval,
+    keepalive_traffic_poll_interval: Annotated[
+        float,
+        typer.Option(
+            envvar="KEEPALIVE_TRAFFIC_POLL_INTERVAL",
+            min=0.1,
+            help="Seconds between polls for new Router inference requests.",
+            rich_help_panel="Keepalive tuning",
+        ),
+    ] = MonitorConfig.keepalive_traffic_poll_interval,
+    keepalive_min_tokens: Annotated[
+        int,
+        typer.Option(
+            envvar="KEEPALIVE_MIN_TOKENS",
+            min=0,
+            help="Minimum generated tokens per keepalive request. Zero uses the worker default.",
+            rich_help_panel="Keepalive tuning",
+        ),
+    ] = MonitorConfig.keepalive_min_tokens,
     keepalive_max_tokens: Annotated[
         int,
         typer.Option(
@@ -115,16 +143,25 @@ def monitor(
             help="Maximum generated tokens per keepalive request.",
             rich_help_panel="Keepalive tuning",
         ),
-    ] = 64,
+    ] = MonitorConfig.keepalive_max_tokens,
     keepalive_concurrency: Annotated[
         int,
         typer.Option(
             envvar="KEEPALIVE_CONCURRENCY",
             min=1,
-            help="Maximum requests per idle worker per round.",
+            help="Maximum concurrent keepalive requests per worker.",
             rich_help_panel="Keepalive tuning",
         ),
-    ] = 8,
+    ] = MonitorConfig.keepalive_concurrency,
+    keepalive_total_concurrency: Annotated[
+        int,
+        typer.Option(
+            envvar="KEEPALIVE_TOTAL_CONCURRENCY",
+            min=1,
+            help="Maximum concurrent keepalive requests across a Router's workers.",
+            rich_help_panel="Keepalive tuning",
+        ),
+    ] = MonitorConfig.keepalive_total_concurrency,
     keepalive_prompt_words: Annotated[
         int,
         typer.Option(
@@ -133,7 +170,7 @@ def monitor(
             help="Maximum synthetic context length in words.",
             rich_help_panel="Keepalive tuning",
         ),
-    ] = 512,
+    ] = MonitorConfig.keepalive_prompt_words,
     router_config: Annotated[Path | None, typer.Option(help="JSON file of named Router configurations.")] = None,
     history_prometheus_url: Annotated[str, typer.Option(help="Prometheus base URL for persistent dashboard history.")] = "",
     history_prometheus_job: Annotated[str, typer.Option(help="Prometheus scrape job for this monitor.")] = "router-monitor",
@@ -160,30 +197,37 @@ def monitor(
         except (OSError, ValueError) as error:
             raise typer.BadParameter(str(error), param_hint="--router-config") from error
     else:
-        config = MonitorConfig(
-            host=host,
-            port=port,
-            prom_port=prom_port,
-            endpoint=url or router_url,
-            metrics_endpoint=metrics_url,
-            admin_url=admin_url,
-            router_type=router_type,
-            worker_urls=tuple(url.rstrip("/") for url in worker or []),
-            api_key=api_key,
-            worker_api_key=worker_api_key,
-            interval=interval,
-            history_window=history_window,
-            web_port=web_port,
-            keepalive=keepalive,
-            auto_unregister=auto_unregister,
-            unregister_unavailable_after=unregister_unavailable_after,
-            keepalive_model=keepalive_model,
-            keepalive_interval=keepalive_interval,
-            keepalive_max_interval=keepalive_max_interval,
-            keepalive_max_tokens=keepalive_max_tokens,
-            keepalive_concurrency=keepalive_concurrency,
-            keepalive_prompt_words=keepalive_prompt_words,
-        )
+        try:
+            config = MonitorConfig(
+                host=host,
+                port=port,
+                prom_port=prom_port,
+                endpoint=url or router_url,
+                metrics_endpoint=metrics_url,
+                admin_url=admin_url,
+                router_type=router_type,
+                worker_urls=tuple(url.rstrip("/") for url in worker or []),
+                api_key=api_key,
+                worker_api_key=worker_api_key,
+                interval=interval,
+                history_window=history_window,
+                web_port=web_port,
+                keepalive=keepalive,
+                keepalive_unconditional=keepalive_unconditional,
+                auto_unregister=auto_unregister,
+                unregister_unavailable_after=unregister_unavailable_after,
+                keepalive_model=keepalive_model,
+                keepalive_interval=keepalive_interval,
+                keepalive_max_interval=keepalive_max_interval,
+                keepalive_traffic_poll_interval=keepalive_traffic_poll_interval,
+                keepalive_min_tokens=keepalive_min_tokens,
+                keepalive_max_tokens=keepalive_max_tokens,
+                keepalive_concurrency=keepalive_concurrency,
+                keepalive_total_concurrency=keepalive_total_concurrency,
+                keepalive_prompt_words=keepalive_prompt_words,
+            )
+        except ValueError as error:
+            raise typer.BadParameter(str(error)) from error
         routers = {"": config}
 
     MonitorApplication(routers, history=history).run()

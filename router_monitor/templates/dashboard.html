@@ -206,52 +206,155 @@
         color: var(--muted);
         margin-top: 6px;
       }
-      .settings {
-        position: relative;
-      }
-      .settings > summary {
-        list-style: none;
-        border: 1px solid var(--line);
-        border-radius: 7px;
-        background: var(--panel);
-        padding: 7px 12px;
-        cursor: pointer;
-      }
-      .settings > summary::-webkit-details-marker {
-        display: none;
-      }
-      .settings > summary:hover {
-        background: var(--hover);
-      }
-      .settings[open] > summary {
+      .settings-trigger[aria-expanded="true"] {
         border-color: var(--blue);
       }
-      .settings-menu {
-        position: absolute;
-        top: calc(100% + 10px);
-        right: 0;
-        z-index: 20;
-        width: min(320px, calc(100vw - 28px));
-        padding: 18px;
+      .settings-dialog {
+        width: min(490px, calc(100vw - 24px));
+        max-height: calc(100dvh - 24px);
+        padding: 0;
+        color: var(--text);
         border: 1px solid var(--line);
-        border-radius: 11px;
+        border-radius: 14px;
         background: var(--panel);
-        box-shadow: 0 12px 36px #0003;
+        box-shadow: 0 18px 64px #0006;
+      }
+      .settings-dialog::backdrop { background: #07101aab; }
+      .settings-dialog[open] { display: flex; flex-direction: column; }
+      .settings-heading, .settings-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 20px;
+      }
+      .settings-heading { padding-top: 16px; padding-bottom: 4px; }
+      .settings-heading h2 { font-size: 18px; }
+      .settings-close {
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        font-size: 20px;
+        line-height: 1;
+        background: transparent;
+        border-color: transparent;
+        color: var(--muted);
+      }
+      .settings-tabs {
+        display: flex;
+        gap: 20px;
+        padding: 0 20px;
+        border-bottom: 1px solid var(--line);
+      }
+      .settings-tabs button {
+        padding: 8px 0 9px;
+        color: var(--muted);
+        border: 0;
+        border-radius: 0;
+        border-bottom: 2px solid transparent;
+        background: transparent;
+      }
+      .settings-tabs button:hover { color: var(--text); }
+      .settings-tabs [aria-pressed="true"] {
+        color: var(--blue);
+        border-bottom-color: var(--blue);
+        font-weight: 650;
+      }
+      .settings-panel { overflow: auto; }
+      .settings-fields {
         display: grid;
         gap: 14px;
+        padding: 16px 20px;
+        margin: 0;
+        border: 0;
+        min-width: 0;
       }
-      .settings-menu label {
+      .settings-grid {
         display: grid;
-        grid-template-columns: 1fr 1.2fr;
-        align-items: center;
-        gap: 16px;
-        color: var(--muted);
-        font-size: 11px;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px 12px;
       }
-      .settings-menu select,
-      .settings-menu input {
+      .settings-fields h3 { margin: 0 0 8px; }
+      .settings-fields label {
+        display: grid;
+        gap: 4px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .settings-fields input, .settings-fields select {
         width: 100%;
         min-width: 0;
+        padding: 6px 9px;
+        background: var(--inset);
+        font-size: 13px;
+      }
+      .settings-fields[disabled] input, .settings-fields[disabled] select { opacity: .65; }
+      .settings-mode {
+        display: grid;
+        gap: 7px;
+        padding: 10px 12px;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        background: var(--inset);
+      }
+      .settings-mode label {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        color: var(--text);
+        font-weight: 650;
+      }
+      .settings-mode select { width: auto; background: var(--panel); font-weight: 500; }
+      .settings-mode p { margin: 0; }
+      .settings-advanced { border-top: 1px solid var(--line); padding-top: 8px; }
+      .settings-advanced summary { color: var(--muted); padding: 2px 0; }
+      .settings-advanced summary:hover { color: var(--text); }
+      .settings-advanced-body { display: grid; gap: 12px; margin-top: 8px; }
+      .settings-model-input { display: flex; align-items: stretch; gap: 6px; }
+      .settings-model-input button { padding: 5px 9px; white-space: nowrap; font-size: 12px; }
+      .settings-model-list {
+        display: grid;
+        gap: 2px;
+        padding: 4px;
+        margin-top: 5px;
+        max-height: 124px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--inset);
+      }
+      .settings-model-list button {
+        text-align: left;
+        overflow: hidden;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+        border: 0;
+        background: transparent;
+        font-size: 12px;
+      }
+      .settings-model-list button:hover { background: var(--hover); }
+      .settings-footer {
+        position: sticky;
+        bottom: 0;
+        background: var(--panel);
+        border-top: 1px solid var(--line);
+      }
+      .settings-footer button {
+        color: var(--bg);
+        background: var(--blue);
+        border-color: var(--blue);
+        font-weight: 650;
+        white-space: nowrap;
+      }
+      .settings-footer button:not(:disabled):hover { filter: brightness(1.12); }
+      .settings-footer button:disabled { opacity: .5; cursor: default; }
+      .settings-feedback { font-size: 12px; margin: 0; color: var(--muted); }
+      .settings-feedback[data-tone="success"] { color: var(--green); }
+      .settings-feedback[data-tone="error"] { color: var(--red); }
+      @media (max-width: 365px) {
+        .settings-grid { grid-template-columns: 1fr; }
+        .settings-heading, .settings-tabs, .settings-fields, .settings-footer { padding-inline: 14px; }
       }
       .banner {
         display: flex;
@@ -610,61 +713,99 @@
             </div>
             <div class="hint" id="updated" data-i18n="Waiting">Waiting</div>
           </div>
-          <details class="settings" id="settings">
-            <summary id="settings-toggle" role="button" data-i18n="Settings">
-              Settings
-            </summary>
-            <div class="settings-menu">
-              <label
-                ><span data-i18n="Window (minutes)">Window (minutes)</span
-                ><input
-                  id="window"
-                  type="number"
-                  min="0.1"
-                  step="any"
-                  required
-                  aria-label="Window (minutes)"
-                  data-i18n-aria-label="Window (minutes)"
-              /></label>
-              <label
-                ><span data-i18n="Refresh interval (seconds)"
-                  >Refresh interval (seconds)</span
-                ><input
-                  id="interval"
-                  type="number"
-                  min="0.1"
-                  step="any"
-                  required
-                  aria-label="Refresh interval (seconds)"
-                  data-i18n-aria-label="Refresh interval (seconds)"
-              /></label>
-              <label
-                ><span data-i18n="Language">Language</span
-                ><select
-                  id="language"
-                  aria-label="Language"
-                  data-i18n-aria-label="Language"
-                >
-                  <option value="en">English</option>
-                  <option value="zh-CN">简体中文</option>
-                </select></label
-              >
-              <label
-                ><span data-i18n="Color theme">Color theme</span
-                ><select
-                  id="theme"
-                  aria-label="Color theme"
-                  data-i18n-aria-label="Color theme"
-                >
-                  <option value="system" data-i18n="System">System</option>
-                  <option value="light" data-i18n="Light">Light</option>
-                  <option value="dark" data-i18n="Dark">Dark</option>
-                </select></label
-              >
-            </div>
-          </details>
+          <button class="settings-trigger" id="settings-toggle" type="button" aria-haspopup="dialog"
+            aria-controls="settings" aria-expanded="false" data-i18n="Settings">Settings</button>
         </div>
       </header>
+      <dialog class="settings-dialog" id="settings" aria-labelledby="settings-title">
+        <div class="settings-heading">
+          <h2 id="settings-title" data-i18n="Settings">Settings</h2>
+          <button class="settings-close" id="settings-close" type="button" aria-label="Close settings"
+            data-i18n-aria-label="Close settings">&times;</button>
+        </div>
+        <div class="settings-tabs">
+          <button type="button" id="show-display-settings" aria-controls="display-settings" aria-pressed="true"
+            data-i18n="Display">Display</button>
+          <button type="button" id="show-keepalive-settings" aria-controls="keepalive-settings" aria-pressed="false"
+            data-i18n="Keepalive">Keepalive</button>
+        </div>
+        <div class="settings-panel" id="display-settings">
+          <div class="settings-fields settings-grid">
+            <label><span data-i18n="Window (minutes)">Window (minutes)</span>
+              <input id="window" type="number" min="0.1" step="any" required
+                aria-label="Window (minutes)" data-i18n-aria-label="Window (minutes)" /></label>
+            <label><span data-i18n="Refresh interval (seconds)">Refresh interval (seconds)</span>
+              <input id="interval" type="number" min="0.1" step="any" required
+                aria-label="Refresh interval (seconds)" data-i18n-aria-label="Refresh interval (seconds)" /></label>
+            <label><span data-i18n="Language">Language</span>
+              <select id="language" aria-label="Language" data-i18n-aria-label="Language">
+                <option value="en">English</option><option value="zh-CN">简体中文</option>
+              </select></label>
+            <label><span data-i18n="Color theme">Color theme</span>
+              <select id="theme" aria-label="Color theme" data-i18n-aria-label="Color theme">
+                <option value="system" data-i18n="System">System</option>
+                <option value="light" data-i18n="Light">Light</option>
+                <option value="dark" data-i18n="Dark">Dark</option>
+              </select></label>
+          </div>
+        </div>
+        <form class="settings-panel" id="keepalive-settings" hidden>
+          <fieldset class="settings-fields" id="keepalive-fields" disabled>
+            <div class="settings-mode">
+              <label><span data-i18n="Mode">Mode</span>
+                <select id="keepalive-mode" data-keepalive="mode" aria-describedby="keepalive-mode-note">
+                  <option value="off" data-i18n="Off">Off</option>
+                  <option value="adaptive" data-i18n="Adaptive">Adaptive</option>
+                  <option value="unconditional" data-i18n="Unconditional">Unconditional</option>
+                </select>
+              </label>
+              <p class="muted" id="keepalive-mode-note"></p>
+            </div>
+            <section aria-labelledby="keepalive-limits">
+              <h3 id="keepalive-limits" data-i18n="Request limits">Request limits</h3>
+              <div class="settings-grid">
+                <label><span data-i18n="Total concurrency">Total concurrency</span>
+                  <input type="number" min="1" step="1" required data-keepalive="keepalive_total_concurrency" /></label>
+                <label><span data-i18n="Per-worker concurrency">Per-worker concurrency</span>
+                  <input type="number" min="1" step="1" required data-keepalive="keepalive_concurrency" /></label>
+                <label><span data-i18n="Minimum output tokens">Minimum output tokens</span>
+                  <input type="number" min="0" step="1" required data-keepalive="keepalive_min_tokens" /></label>
+                <label><span data-i18n="Maximum output tokens">Maximum output tokens</span>
+                  <input type="number" min="1" step="1" required data-keepalive="keepalive_max_tokens" /></label>
+              </div>
+            </section>
+            <details class="settings-advanced" id="keepalive-advanced">
+              <summary data-i18n="Advanced">Advanced</summary>
+              <div class="settings-advanced-body">
+                <div>
+                  <label for="keepalive-model" data-i18n="Worker model">Worker model</label>
+                  <div class="settings-model-input">
+                    <input id="keepalive-model" autocomplete="off" placeholder="All known models"
+                      data-i18n-placeholder="All known models" data-keepalive="keepalive_model" />
+                    <button id="keepalive-model-toggle" type="button" data-i18n="Choose model"
+                      aria-expanded="false" aria-controls="keepalive-models">Choose model</button>
+                  </div>
+                  <div class="settings-model-list" id="keepalive-models" hidden></div>
+                </div>
+                <div class="settings-grid">
+                  <label><span data-i18n="Prompt length (words)">Prompt length (words)</span>
+                    <input type="number" min="1" step="1" required data-keepalive="keepalive_prompt_words" /></label>
+                  <label><span id="keepalive-interval-label" data-i18n="Round interval (s)">Round interval (s)</span>
+                    <input type="number" min="0.1" step="any" required data-keepalive="keepalive_interval" /></label>
+                  <label id="keepalive-traffic-setting"><span data-i18n="Traffic check interval (s)">Traffic check interval (s)</span>
+                    <input type="number" min="0.1" step="any" required data-keepalive="keepalive_traffic_poll_interval" /></label>
+                  <label id="keepalive-backoff-setting"><span data-i18n="Maximum backoff (s)">Maximum backoff (s)</span>
+                    <input type="number" min="0.1" step="any" required data-keepalive="keepalive_max_interval" /></label>
+                </div>
+              </div>
+            </details>
+          </fieldset>
+          <div class="settings-footer">
+            <p class="settings-feedback" id="keepalive-feedback" role="status"></p>
+            <button type="submit" id="save-keepalive" disabled data-i18n="Apply">Apply</button>
+          </div>
+        </form>
+      </dialog>
       <div class="banner" id="notice" hidden>
         <span id="notice-text" role="status"></span>
         <button
@@ -1146,6 +1287,41 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           "ROUTER MONITOR": "ROUTER / 实时监控",
           "Router overview": "路由概览",
           Settings: "设置",
+          "Close settings": "关闭设置",
+          Display: "显示",
+          Keepalive: "保活",
+          Mode: "模式",
+          Off: "关闭",
+          Adaptive: "自适应",
+          Unconditional: "无条件",
+          "Request limits": "请求上限",
+          "Total concurrency": "总并发",
+          "Per-worker concurrency": "单 Worker 并发上限",
+          "Minimum output tokens": "最少生成 Token",
+          "Maximum output tokens": "最多生成 Token",
+          Advanced: "高级设置",
+          "Worker model": "Worker 模型",
+          "Choose model": "选择模型",
+          "All known models": "所有已识别模型",
+          "Prompt length (words)": "上下文长度（词）",
+          "Round interval (s)": "轮次间隔（秒）",
+          "Failure retry interval (s)": "失败重试间隔（秒）",
+          "Traffic check interval (s)": "流量检测间隔（秒）",
+          "Maximum backoff (s)": "最大退避间隔（秒）",
+          Apply: "应用",
+          "Keepalive is off.": "当前关闭保活。",
+          "Warm idle workers and pause for inference traffic.": "仅向空闲 Worker 发保活，有推理流量时自动退让。",
+          "Refill successful requests immediately to maintain concurrency, including during inference traffic.": "请求成功结束后立即补位，维持保活并发。有推理流量时仍继续。",
+          "Changes last until Monitor restarts.": "Monitor 重启后恢复启动配置。",
+          "Open the local or forwarded dashboard to edit.": "通过本机或端口转发打开面板即可编辑。",
+          "Keepalive is available for SGLang Routers.": "保活设置适用于 SGLang Router。",
+          "Loading keepalive settings…": "正在读取保活设置…",
+          "Could not load keepalive settings.": "无法读取保活设置。",
+          "Could not apply keepalive settings.": "无法应用保活设置。",
+          "Minimum tokens must be at most maximum tokens.": "最少生成 Token 不能超过最多生成 Token。",
+          "Applying…": "正在应用…",
+          "Saved for this Router.": "已保存到当前 Router。",
+          "Turn off keepalive for this Router.": "可以关闭此 Router 的保活。",
           Language: "语言",
           "Color theme": "主题模式",
           System: "跟随系统",
@@ -2316,11 +2492,16 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           });
         }
 
-        async function readJSON(path) {
+        function routerScope() {
+          const router = $("router-target")?.value;
+          return router ? "router=" + encodeURIComponent(router) : "";
+        }
+        async function readJSON(path, options = {}) {
           const controller = new AbortController(),
             timeout = setTimeout(() => controller.abort(), 8000);
           try {
             const response = await fetch(path, {
+              ...options,
               signal: controller.signal,
               cache: "no-store",
             });
@@ -2339,8 +2520,7 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
               1,
               Math.ceil((preferences.window * 60) / CONFIG.collectionSeconds),
             );
-            const router = $("router-target")?.value;
-            const scope = router ? "router=" + encodeURIComponent(router) : "";
+            const scope = routerScope();
             const [snapshotResult, historyResult] = await Promise.allSettled([
               readJSON(scope ? "/data?" + scope : "/data"),
               readJSON("/history?n=" + count + (scope ? "&" + scope : "")),
@@ -2367,20 +2547,154 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           }
         }
 
+        function bindSettings() {
+          const dialog = $("settings"), toggle = $("settings-toggle");
+          const display = $("show-display-settings"), keepalive = $("show-keepalive-settings");
+          const form = $("keepalive-settings"), fields = $("keepalive-fields"), save = $("save-keepalive");
+          const model = $("keepalive-model"), modelToggle = $("keepalive-model-toggle"), models = $("keepalive-models");
+          const inputs = [...document.querySelectorAll("[data-keepalive]")];
+          const adaptiveFields = inputs.filter(input =>
+            ["keepalive_traffic_poll_interval", "keepalive_max_interval"].includes(input.dataset.keepalive),
+          );
+          const scope = routerScope();
+          const endpoint = "/settings/keepalive" + (scope ? "?" + scope : "");
+          const modeNotes = {
+            off: "Keepalive is off.",
+            adaptive: "Warm idle workers and pause for inference traffic.",
+            unconditional: "Refill successful requests immediately to maintain concurrency, including during inference traffic.",
+          };
+          let editable = false, busy = false;
+          let savedSettings;
+          function setBusy(value) {
+            busy = value;
+            fields.disabled = save.disabled = busy || !editable;
+          }
+          function feedback(message, tone = "") {
+            const element = $("keepalive-feedback");
+            element.textContent = t(message);
+            element.dataset.tone = tone;
+          }
+          function modeNote() {
+            const mode = $("keepalive-mode").value;
+            const continuous = mode === "unconditional";
+            $("keepalive-mode-note").textContent = t(modeNotes[mode]);
+            const interval = $("keepalive-interval-label");
+            interval.dataset.i18n = continuous ? "Failure retry interval (s)" : "Round interval (s)";
+            interval.textContent = t(interval.dataset.i18n);
+            $("keepalive-traffic-setting").hidden = $("keepalive-backoff-setting").hidden = continuous;
+            for (const input of adaptiveFields) input.disabled = continuous;
+          }
+          function showPanel(showKeepalive) {
+            display.setAttribute("aria-pressed", !showKeepalive);
+            keepalive.setAttribute("aria-pressed", showKeepalive);
+            $("display-settings").hidden = showKeepalive;
+            form.hidden = !showKeepalive;
+          }
+          function showModels(open) {
+            models.hidden = !open;
+            modelToggle.setAttribute("aria-expanded", open);
+          }
+          function modelChoice(name) {
+            const button = document.createElement("button");
+            button.type = "button";
+            button.textContent = name || t("All known models");
+            button.title = button.textContent;
+            button.onclick = () => {
+              model.value = name;
+              showModels(false);
+              model.focus();
+            };
+            return button;
+          }
+          function fill(view) {
+            savedSettings = view.settings;
+            for (const input of inputs) input.value = String(savedSettings[input.dataset.keepalive]);
+            for (const option of $("keepalive-mode").options)
+              option.disabled = !view.supported && option.value !== "off";
+            models.replaceChildren(...["", ...view.models].map(modelChoice));
+            showModels(false);
+            editable = view.editable;
+            modeNote();
+          }
+
+          toggle.onclick = () => {
+            savedSettings = undefined;
+            showPanel(false);
+            dialog.showModal();
+            toggle.setAttribute("aria-expanded", "true");
+          };
+          $("settings-close").onclick = () => dialog.close();
+          dialog.addEventListener("cancel", event => {
+            const hasDraft = savedSettings && inputs.some(input =>
+              !input.disabled && input.value !== String(savedSettings[input.dataset.keepalive]),
+            );
+            if (busy || hasDraft) event.preventDefault();
+          });
+          dialog.addEventListener("close", () => {
+            toggle.setAttribute("aria-expanded", "false");
+            toggle.focus();
+          });
+          display.onclick = () => showPanel(false);
+          keepalive.onclick = async () => {
+            if (!form.hidden) return;
+            showPanel(true);
+            if (busy || savedSettings) return;
+            editable = false;
+            setBusy(true);
+            feedback("Loading keepalive settings…");
+            try {
+              const view = await readJSON(endpoint);
+              fill(view);
+              if (!view.supported) feedback(view.editable ? "Turn off keepalive for this Router." : "Keepalive is available for SGLang Routers.");
+              else if (!view.editable) feedback("Open the local or forwarded dashboard to edit.");
+              else feedback("Changes last until Monitor restarts.");
+            } catch {
+              feedback("Could not load keepalive settings.", "error");
+            } finally {
+              setBusy(false);
+            }
+          };
+          $("keepalive-mode").onchange = modeNote;
+          modelToggle.onclick = () => showModels(models.hidden);
+          const advanced = $("keepalive-advanced");
+          form.addEventListener("invalid", event => {
+            if (advanced.contains(event.target)) advanced.open = true;
+          }, true);
+          form.onsubmit = async event => {
+            event.preventDefault();
+            if (!editable || busy) return;
+            const settings = {...savedSettings};
+            for (const input of inputs) {
+              if (!input.disabled) {
+                settings[input.dataset.keepalive] = input.getAttribute("type") === "number" ? Number(input.value) : input.value;
+              }
+            }
+            if (settings.keepalive_min_tokens > settings.keepalive_max_tokens) {
+              feedback("Minimum tokens must be at most maximum tokens.", "error");
+              return;
+            }
+            setBusy(true);
+            feedback("Applying…");
+            try {
+              fill(await readJSON(endpoint, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(settings),
+              }));
+              feedback("Saved for this Router.", "success");
+            } catch {
+              feedback("Could not apply keepalive settings.", "error");
+            } finally {
+              setBusy(false);
+            }
+          };
+        }
+
         function bindControls() {
           $("dismiss-notice").onclick = () => {
             $("notice").hidden = true;
           };
-          const settings = $("settings");
-          document.addEventListener("click", (event) => {
-            if (!settings.contains(event.target)) settings.open = false;
-          });
-          settings.addEventListener("keydown", (event) => {
-            if (event.key === "Escape") {
-              settings.open = false;
-              $("settings-toggle").focus();
-            }
-          });
+          bindSettings();
           $("theme").onchange = () => {
             preferences.theme = $("theme").value;
             savePreference("router-monitor-theme", preferences.theme);

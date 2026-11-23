@@ -7,7 +7,7 @@ from rich.live import Live
 from rich.table import Table
 from rich.text import Text
 
-from .config import MonitorConfig
+from ..config import MonitorConfig
 
 
 def _number(value, spec: str, suffix: str = "") -> str:

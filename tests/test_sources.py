@@ -8,26 +8,18 @@ from unittest.mock import patch
 
 import httpx
 
-from router_monitor.collectors import RouterCollector
-from router_monitor.config import MonitorConfig
-from router_monitor.http import HttpClient
-from router_monitor.metrics import metric_samples
-from router_monitor.sources import RouterSource
-from router_monitor.worker import WorkerMetricsCollector
+from router_monitor.collection.collector import RouterCollector
+from router_monitor.collection.metrics import metric_samples
+from router_monitor.collection.sources import RouterSource
+from router_monitor.collection.worker import WorkerMetricsCollector
+from router_monitor.config import MonitorConfig, RouterType
 
 
 @contextmanager
 def collector_for(config, handle):
-    collector = RouterCollector(config)
-    collector._http.close()
-    collector._http = HttpClient(
-        transport=httpx.MockTransport(handle),
-        token=config.api_key,
-        origins=(config.router_url, config.admin_endpoint, config.prom_url),
-    )
-    collector._source.http = collector._http
-    collector._worker_metrics._http.close()
-    collector._worker_metrics._http = HttpClient(transport=httpx.MockTransport(handle), token=config.worker_api_key)
+    source = RouterSource(config, transport=httpx.MockTransport(handle))
+    workers = WorkerMetricsCollector(config.interval, config.worker_api_key, transport=httpx.MockTransport(handle))
+    collector = RouterCollector(config, source=source, worker_metrics=workers)
     try:
         yield collector
     finally:
@@ -37,8 +29,10 @@ def collector_for(config, handle):
 class SourceTests(unittest.TestCase):
     def test_native_nginx_stub_status_provides_request_counter(self):
         requests = 100
+        paths = []
 
         def handle(request):
+            paths.append(request.url.path)
             if request.url.path == "/stub_status":
                 return httpx.Response(
                     200,
@@ -49,10 +43,12 @@ class SourceTests(unittest.TestCase):
                 )
             return httpx.Response(404)
 
-        config = MonitorConfig(host="proxy", endpoint="http://proxy", metrics_endpoint="http://proxy/stub_status")
+        config = MonitorConfig(
+            host="proxy", endpoint="http://proxy", metrics_endpoint="http://proxy/stub_status", router_type=RouterType.nginx
+        )
         with (
             collector_for(config, handle) as collector,
-            patch("router_monitor.collectors.time.monotonic", side_effect=[1, 3]),
+            patch("router_monitor.collection.collector.time.monotonic", side_effect=[1, 3]),
         ):
             first = collector.collect()
             requests = 110
@@ -62,6 +58,7 @@ class SourceTests(unittest.TestCase):
         self.assertIsNone(first["rps"])
         self.assertEqual(second["rps"], 5)
         self.assertEqual(second["worker_rows"], [])
+        self.assertEqual(paths, ["/stub_status", "/stub_status"])
 
     def test_detection_and_explicit_workers_across_proxy_families(self):
         for kind, metric in [
@@ -177,8 +174,7 @@ class SourceTests(unittest.TestCase):
         self.assertNotIn("/health", [request.url.path for request in calls])
 
     def test_model_label_fallback_and_unknown_endpoints_are_not_false_sglang(self):
-        with http_client(lambda request: httpx.Response(404)) as client:
-            source = RouterSource(MonitorConfig(host="router"), client)
+        with source_for(MonitorConfig(host="router"), lambda request: httpx.Response(404)) as source:
             registry = source.registry('{"data":[{"id":"generic-model"}]}', [])
             self.assertEqual(registry.kind, "generic")
             self.assertFalse(registry.available)
@@ -200,7 +196,7 @@ class SourceTests(unittest.TestCase):
                 return httpx.Response(200, json={"data": [{"id": "alpha"}]})
             if request.url.host == "worker" and request.url.path == "/metrics":
                 lines = []
-                for rank in ("0", "1"):
+                for rank in ("0", "engine-b"):
                     labels = f'{{engine="{rank}",model_name="alpha"}}'
                     for name, value in (
                         ("num_requests_running", 2),
@@ -234,7 +230,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(row["hit_pct"], 50)
             self.assertEqual(row["counter_window"]["ttft_mean_ms"], 500)
             self.assertAlmostEqual(row["counter_window"]["itl_ms"], 20)
-            self.assertEqual([r["rank"] for r in row["dp_metrics"]], ["0", "1"])
+            self.assertEqual([r["rank"] for r in row["dp_metrics"]], ["0", "engine-b"])
             for key in ("gen_tps", "success_pct", "prefill_tokens"):
                 self.assertIsNone(first["worker_rows"][0][key])
             self.assertIsNone(reset["worker_rows"][0]["gen_tps"])
@@ -254,8 +250,8 @@ class SourceTests(unittest.TestCase):
                 }
             ]
         }
-        with http_client(lambda request: httpx.Response(200, json=data)) as client:
-            source = RouterSource(MonitorConfig(host="router", admin_url="http://admin:9901"), client)
+        config = MonitorConfig(host="router", admin_url="http://admin:9901")
+        with source_for(config, lambda request: httpx.Response(200, json=data)) as source:
             registry = source.registry("", metric_samples("envoy_server_live 1\n"))
             self.assertEqual(registry.workers[0]["url"], "http://[::1]:8000")
             self.assertIsNone(registry.workers[0]["is_healthy"])
@@ -279,14 +275,17 @@ class SourceTests(unittest.TestCase):
             'dynamo_frontend_time_to_first_token_seconds_count{model="alpha"} 10\n'
             "vllm:num_requests_running 3\n"
         )
-        with http_client(lambda request: httpx.Response(404)) as client:
-            config = MonitorConfig(host="router")
-            source = RouterSource(config, client)
+        config = MonitorConfig(host="router")
+
+        def missing(request):
+            return httpx.Response(404)
+
+        with source_for(config, missing) as source:
             registry = source.registry("", samples)
             self.assertEqual(registry.kind, "dynamo")
             self.assertEqual(registry.scope, "deployments")
             self.assertEqual(len(registry.metrics), 2)
-            source = RouterSource(replace(config, worker_urls=("http://worker",)), client)
+        with source_for(replace(config, worker_urls=("http://worker",)), missing) as source:
             registry = source.registry("", samples)
             self.assertEqual(registry.scope, "workers")
             self.assertEqual(registry.metrics, {})
@@ -312,21 +311,20 @@ class SourceTests(unittest.TestCase):
 
         def handle(request):
             calls.append(request)
+            if request.url.port == 29000:
+                return httpx.Response(200, text="envoy_server_live 1\n")
             if request.url.path == "/metrics":
                 return httpx.Response(200, text="<html>UI fallback</html>")
-            if request.url.path == "/stats/prometheus":
-                return httpx.Response(200, text="envoy_server_live 1\n")
             return httpx.Response(404)
 
-        with http_client(handle, token="secret", origins=("http://router",)) as client:
-            config = MonitorConfig(host="router", endpoint="http://router")
-            source = RouterSource(config, client)
+        config = MonitorConfig(host="router", endpoint="http://router", api_key="secret")
+        with source_for(config, handle) as source:
             self.assertEqual(source.read_metrics(), [{"name": "envoy_server_live", "labels": {}, "value": 1}])
-            client.fetch("http://other")
+            self.assertEqual(calls[-1].url.port, 29000)
             self.assertNotIn("authorization", calls[-1].headers)
             self.assertTrue(all(r.headers.get("authorization") == "Bearer secret" for r in calls[:-1]))
-            calls.clear()
-            source = RouterSource(replace(config, metrics_endpoint="http://router/metrics"), client)
+        calls.clear()
+        with source_for(replace(config, metrics_endpoint="http://router/metrics"), handle) as source:
             self.assertEqual(source.read_metrics(), [])
             self.assertEqual(len(calls), 1)
 
@@ -353,9 +351,9 @@ class SourceTests(unittest.TestCase):
 
 
 @contextmanager
-def http_client(handle, **kwargs):
-    client = HttpClient(transport=httpx.MockTransport(handle), **kwargs)
+def source_for(config, handle):
+    source = RouterSource(config, transport=httpx.MockTransport(handle))
     try:
-        yield client
+        yield source
     finally:
-        client.close()
+        source.close()

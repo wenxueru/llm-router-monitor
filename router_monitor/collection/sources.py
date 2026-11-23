@@ -6,8 +6,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from urllib.parse import quote
 
-from .config import MonitorConfig, RouterType
-from .http import HttpClient
+import httpx
+
+from ..config import MonitorConfig, RouterType
+from ..http import HttpClient
 from .metrics import metric_samples
 
 
@@ -19,6 +21,11 @@ class Registry:
     # Gateway deployments have no directly scrapeable worker endpoint.
     metrics: dict[str, list[dict]] = field(default_factory=dict)
     scope: str = "workers"
+
+
+def worker_host(url: str) -> str:
+    """Strip the rank suffix from a SGLang worker URL."""
+    return url.partition("@")[0]
 
 
 def json_object(text: str):
@@ -48,11 +55,18 @@ def detect_router(samples: list[dict]) -> str:
 
 
 class RouterSource:
-    def __init__(self, config: MonitorConfig, http: HttpClient):
+    def __init__(self, config: MonitorConfig, *, transport: httpx.BaseTransport | None = None):
         self.config = config
-        self.http = http
+        self._http = HttpClient(
+            token=config.api_key, origins=(config.router_url, config.admin_endpoint, config.prom_url), transport=transport
+        )
         self.metrics_url = config.prom_url
         self.kind = config.router_type.value
+
+    def read_workers(self) -> str:
+        if self.config.router_type in (RouterType.auto, RouterType.sglang):
+            return self._http.fetch(f"{self.config.router_url}/workers")
+        return ""
 
     def read_metrics(self) -> list[dict]:
         # The configured URL is authoritative. Only default locations fall back.
@@ -62,7 +76,7 @@ class RouterSource:
             if self.kind in {"auto", "sglang"}:
                 urls.append(self.config.separate_prom_url)
         for url in dict.fromkeys(urls):
-            text = self.http.fetch(url)
+            text = self._http.fetch(url)
             if not text:
                 continue
             text = text.lstrip()
@@ -81,6 +95,31 @@ class RouterSource:
             except ValueError:
                 continue
         return []
+
+    def read_inference_requests(self) -> float | None:
+        metric = request_metric("sglang")
+        total = None
+        for sample in self.read_metrics():
+            if sample["name"] != metric:
+                continue
+            labels = sample["labels"]
+            if "method" not in labels or "path" not in labels:
+                continue
+            if total is None:
+                total = 0.0
+            if labels["method"] == "POST" and labels["path"] in (
+                "/generate",
+                "/classify",
+                "/rerank",
+                "/v1/chat/completions",
+                "/v1/classify",
+                "/v1/completions",
+                "/v1/embeddings",
+                "/v1/rerank",
+                "/v1/responses",
+            ):
+                total += sample["value"]
+        return total
 
     def registry(self, raw: str, samples: list[dict]) -> Registry:
         data = json_object(raw)
@@ -114,7 +153,7 @@ class RouterSource:
             if candidate.available:
                 result = candidate
                 self.kind = candidate.kind
-        known = {worker["url"].split("@")[0] for worker in result.workers}
+        known = {worker_host(worker["url"]) for worker in result.workers}
         if result.scope == "deployments" and self.config.worker_urls:
             result.workers.clear()
             result.metrics.clear()
@@ -173,7 +212,7 @@ class RouterSource:
         return Registry("dynamo", workers, bool(groups), metrics, "deployments")
 
     def _envoy(self) -> Registry:
-        data = json_object(self.http.fetch(f"{self.config.admin_endpoint}/clusters?format=json"))
+        data = json_object(self._http.fetch(f"{self.config.admin_endpoint}/clusters?format=json"))
         if not isinstance(data, dict) or "cluster_statuses" not in data:
             return Registry("envoy", [], False)
         hosts = {}
@@ -198,7 +237,7 @@ class RouterSource:
 
     def _litellm(self, samples: list[dict]) -> Registry:
         # Do not call /health: LiteLLM may issue billable inference probes there.
-        data = json_object(self.http.fetch(f"{self.config.router_url}/model/info"))
+        data = json_object(self._http.fetch(f"{self.config.router_url}/model/info"))
         models = data.get("data") if isinstance(data, dict) else None
         registry_ok = (
             isinstance(models, list)
@@ -235,6 +274,9 @@ class RouterSource:
             metrics[url] = observed
         return Registry("litellm", workers, registry_ok or bool(deployments), metrics, "deployments")
 
+    def close(self) -> None:
+        self._http.close()
+
 
 def request_metric(kind: str) -> str | None:
     return {
@@ -248,53 +290,3 @@ def request_metric(kind: str) -> str | None:
         "ray": "ray_serve_num_http_requests_total",
         "dynamo": "dynamo_frontend_requests_total",
     }.get(kind)
-
-
-def normalize_inference(samples: list[dict], engine: str) -> list[dict]:
-    """Map equivalent meanings only; unsupported signals remain absent."""
-    if engine == "sglang":
-        return samples
-    aliases = {
-        "vllm:num_requests_running": "num_running_reqs",
-        "vllm:num_requests_waiting": "num_queue_reqs",
-        "vllm:kv_cache_usage_perc": "token_usage",
-        "vllm:gpu_cache_usage_perc": "token_usage",
-        "vllm:generation_tokens_total": "generation_tokens_total",
-        "vllm:prefix_cache_hits_total": "cached_tokens_total",
-        "vllm:prefix_cache_queries_total": "prompt_tokens_total",
-        "litellm_output_tokens_metric_total": "generation_tokens_total",
-        "litellm_input_tokens_metric_total": "prompt_tokens_total",
-        "litellm_input_cached_tokens_metric_total": "cached_tokens_total",
-        "litellm_proxy_total_requests_metric_total": "requests_total",
-        "litellm_proxy_failed_requests_metric_total": "errors_total",
-        "dynamo_frontend_output_tokens_total": "generation_tokens_total",
-    }
-    histograms = {
-        "vllm:time_to_first_token_seconds": "time_to_first_token_seconds",
-        "vllm:inter_token_latency_seconds": "inter_token_latency_seconds",
-        "litellm_llm_api_time_to_first_token_metric": "time_to_first_token_seconds",
-        "dynamo_frontend_time_to_first_token_seconds": "time_to_first_token_seconds",
-        "dynamo_frontend_inter_token_latency_seconds": "inter_token_latency_seconds",
-    }
-    prefix = {"vllm": "vllm:", "litellm": "litellm_", "dynamo": "dynamo_"}[engine]
-    result = []
-    names = {sample["name"] for sample in samples}
-    for sample in samples:
-        name = sample["name"]
-        if name == "vllm:gpu_cache_usage_perc" and "vllm:kv_cache_usage_perc" in names:
-            continue
-        if name != "process_start_time_seconds" and not name.startswith(prefix):
-            continue
-        canonical = aliases.get(name)
-        for source, target in histograms.items():
-            if name.startswith(source + "_"):
-                canonical = target + name[len(source) :]
-                break
-        if canonical:
-            labels = dict(sample["labels"])
-            if engine == "vllm":
-                labels["dp_rank"] = labels.get("engine", labels.get("engine_id", labels.get("dp_rank", "0")))
-            result.append({"name": "sglang:" + canonical, "labels": labels, "value": sample["value"]})
-        elif name == "process_start_time_seconds":
-            result.append(sample)
-    return result

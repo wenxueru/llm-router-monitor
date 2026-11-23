@@ -9,8 +9,8 @@ from html.parser import HTMLParser
 from fastapi.testclient import TestClient
 
 from router_monitor.config import MonitorConfig
-from router_monitor.dashboard import create_dashboard
-from router_monitor.state import RouterTarget
+from router_monitor.presentation.dashboard import create_dashboard
+from router_monitor.target import RouterTarget
 
 
 class DashboardParser(HTMLParser):
@@ -78,18 +78,22 @@ class Element {
   }
   get innerHTML() { return this.html; }
   addEventListener(event, handler) { this.listeners[event] = handler; }
-  trigger(event) { return (this.listeners[event] ?? this['on' + event])?.({preventDefault(){}}); }
+  trigger(event, details = {}) { return (this.listeners[event] ?? this['on' + event])?.({target: this, preventDefault(){}, ...details}); }
   setAttribute(key, value) { this.attrs[key] = String(value); }
   getAttribute(key) { return this.attrs[key] ?? null; }
   removeAttribute(key) { delete this.attrs[key]; }
   checkValidity() { const n = Number(this.value); return this.value !== '' && Number.isFinite(n) && n >= Number(this.attrs.min ?? '-Infinity') && n <= Number(this.attrs.max ?? 'Infinity'); }
-  replaceChildren(...options) { this.options = options; this.value = options[0]?.value ?? ''; }
+  replaceChildren(...options) { this.options = options; this.children = options; this.value = options[0]?.value ?? ''; }
+  showModal() { this.open = true; }
+  close() { this.open = false; this.trigger('close'); }
+  focus() { this.focused = true; }
 }
 const staticElements = input.elements.map(item => new Element(item.attrs, item.options));
 const allElements = () => [...staticElements, ...staticElements.flatMap(element => element.children)];
 const root = {dataset: {}};
 const document = {
   documentElement: root,
+  createElement: () => new Element(),
   addEventListener() {},
   getElementById: id => elements.get(id) ?? null,
   querySelectorAll: selector => allElements().filter(element => selector.slice(1, -1) in element.attrs),
@@ -143,11 +147,15 @@ const context = {
     getItem: key => {if (input.blocked) throw Error('blocked'); return stored[key] ?? null;},
     setItem: (key, value) => {if (input.blocked) throw Error('blocked'); stored[key] = value;},
   },
-  Option: function(text, value) {this.text = text; this.value = value;},
+  Option: function(text, value) {return Object.assign(new Element(), {text, value});},
   setTimeout: (callback, delay) => {timers.set(++nextTimer, {callback, delay}); return nextTimer;},
   clearTimeout: id => timers.delete(id), setInterval() {}, AbortController,
-  fetch: async path => {
+  fetch: async (path, options) => {
     fixture.requests.push(path);
+    if (path.startsWith('/settings/keepalive')) {
+      if (options.method === 'PUT') fixture.keepalive.settings = JSON.parse(options.body);
+      return {ok: true, json: async () => fixture.keepalive};
+    }
     if (fixture.failed === 'all' || fixture.failed === 'history' && path.startsWith('/history')) throw Error('offline');
     return {ok: true, json: async () => path.split('?')[0] === '/data' ? fixture.snapshot : fixture.history};
   },
@@ -241,6 +249,72 @@ assert.deepEqual(Object.keys(context).sort(), initialGlobals);
                 stored={"router-monitor-theme": "invalid", "router-monitor-language": "invalid"},
                 blocked=blocked,
             )
+
+    def test_settings_load_and_apply_keepalive(self):
+        self.evaluate(r"""
+fixture.keepalive = {editable: true, supported: true, models: ['model-a'], settings: {
+  mode: 'adaptive', keepalive_model: '', keepalive_interval: 2, keepalive_max_interval: 60,
+  keepalive_traffic_poll_interval: 0.25, keepalive_min_tokens: 0, keepalive_max_tokens: 4096,
+  keepalive_concurrency: 48, keepalive_total_concurrency: 96, keepalive_prompt_words: 4096,
+}};
+assert.equal(fixture.requests.includes('/settings/keepalive'), false);
+$('settings-toggle').trigger('click');
+assert.equal($('settings').open, true);
+assert.equal($('display-settings').hidden, false);
+await $('show-keepalive-settings').trigger('click');
+assert.equal($('display-settings').hidden, true);
+assert.equal($('save-keepalive').disabled, false);
+assert.equal($('keepalive-interval-label').textContent, 'Round interval (s)');
+assert.equal($('keepalive-traffic-setting').hidden, false);
+assert.equal($('keepalive-models').hidden, true);
+$('keepalive-model-toggle').trigger('click');
+assert.equal($('keepalive-models').hidden, false);
+const options = $('keepalive-models').children;
+assert.equal(options[0].textContent, 'All known models');
+assert.equal(options[1].textContent, 'model-a');
+options[1].trigger('click');
+assert.equal($('keepalive-models').hidden, true);
+assert.equal($('keepalive-model').value, 'model-a');
+$('keepalive-mode').value = 'unconditional';
+$('keepalive-mode').trigger('change');
+assert.match($('keepalive-mode-note').textContent, /during inference/);
+assert.equal($('keepalive-interval-label').textContent, 'Failure retry interval (s)');
+assert.equal($('keepalive-traffic-setting').hidden, true);
+const field = id => allElements().find(element => element.dataset.keepalive === id);
+assert.equal(field('keepalive_traffic_poll_interval').disabled, true);
+field('keepalive_traffic_poll_interval').value = '';
+field('keepalive_total_concurrency').value = '128';
+await tick();
+$('settings').trigger('click');
+assert.equal($('settings').open, true);
+let cancelled = false;
+const cancel = {preventDefault() { cancelled = true; }};
+$('settings').trigger('cancel', cancel);
+assert.equal(cancelled, true);
+$('show-display-settings').trigger('click');
+await $('show-keepalive-settings').trigger('click');
+assert.equal(field('keepalive_total_concurrency').value, '128');
+assert.equal($('keepalive-model').value, 'model-a');
+assert.equal(fixture.requests.filter(path => path === '/settings/keepalive').length, 1);
+field('keepalive_min_tokens').value = '5000';
+await $('keepalive-settings').trigger('submit');
+assert.equal(fixture.keepalive.settings.mode, 'adaptive');
+assert.match($('keepalive-feedback').textContent, /Minimum tokens/);
+field('keepalive_min_tokens').value = '1024';
+await $('keepalive-settings').trigger('submit');
+assert.equal(fixture.keepalive.settings.mode, 'unconditional');
+assert.equal(fixture.keepalive.settings.keepalive_model, 'model-a');
+assert.equal(fixture.keepalive.settings.keepalive_total_concurrency, 128);
+assert.equal(fixture.keepalive.settings.keepalive_traffic_poll_interval, 0.25);
+assert.equal($('keepalive-feedback').textContent, 'Saved for this Router.');
+assert.equal($('settings').open, true);
+cancelled = false;
+$('settings').trigger('cancel', cancel);
+assert.equal(cancelled, false);
+$('settings-close').trigger('click');
+assert.equal($('settings').open, false);
+assert.equal($('settings-toggle').focused, true);
+""")
 
     def test_filters_expansion_and_language_changes_preserve_user_state(self):
         self.evaluate(r"""

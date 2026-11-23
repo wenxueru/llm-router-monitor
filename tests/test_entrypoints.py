@@ -4,8 +4,11 @@ import json
 import os
 import sys
 import unittest
+from contextlib import nullcontext
 from pathlib import Path
+from queue import Queue
 from tempfile import TemporaryDirectory
+from threading import Event
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -17,10 +20,13 @@ from jinja2 import FileSystemLoader
 from typer.testing import CliRunner
 
 from router_monitor import router
+from router_monitor.app import MonitorApplication
 from router_monitor.cli import app
 from router_monitor.config import MonitorConfig, PrometheusHistoryConfig, RouterType
-from router_monitor.dashboard import create_dashboard
-from router_monitor.state import RouterTarget, SnapshotStore
+from router_monitor.maintenance.keepalive import KeepaliveWarmer
+from router_monitor.presentation.dashboard import create_dashboard
+from router_monitor.state import SnapshotStore
+from router_monitor.target import RouterTarget
 
 
 class ConfigTests(unittest.TestCase):
@@ -35,7 +41,13 @@ class ConfigTests(unittest.TestCase):
         with TemporaryDirectory() as temporary, patch.dict(os.environ, {}, clear=True):
             path = Path(temporary) / "routers.json"
             entries = {
-                "inference": {"endpoint": "http://engine:4000", "interval": 3},
+                "inference": {
+                    "endpoint": "http://engine:4000",
+                    "interval": 3,
+                    "keepalive_unconditional": True,
+                    "keepalive_min_tokens": 32,
+                    "keepalive_traffic_poll_interval": 0.25,
+                },
                 "proxy": {"endpoint": "http://proxy:8080", "router_type": "nginx", "worker_urls": ["http://worker/"]},
             }
             path.write_text(json.dumps(entries))
@@ -47,6 +59,9 @@ class ConfigTests(unittest.TestCase):
                 self.assertEqual(set(targets), {"inference", "proxy"})
                 self.assertEqual(targets["inference"].router_url, "http://engine:4000")
                 self.assertEqual(targets["inference"].interval, 3)
+                self.assertTrue(targets["inference"].keepalive_unconditional)
+                self.assertEqual(targets["inference"].keepalive_min_tokens, 32)
+                self.assertEqual(targets["inference"].keepalive_traffic_poll_interval, 0.25)
                 self.assertEqual(targets["proxy"].router_type, RouterType.nginx)
                 self.assertEqual(targets["proxy"].worker_urls, ("http://worker",))
                 for target in targets.values():
@@ -58,6 +73,7 @@ class ConfigTests(unittest.TestCase):
                 ('{"bad": {"endpoint": "file:///tmp/router"}}', []),
                 ('{"bad": {"endpoint": "http://router", "typo": 1}}', []),
                 ('{"bad": {"endpoint": "http://router", "keepalive": "true"}}', []),
+                ('{"bad": {"endpoint": "http://router", "keepalive_min_tokens": 65}}', []),
                 ('{"bad": {"endpoint": "http://router", "interval": NaN}}', []),
                 ('{"bad": {"endpoint": "http://router", "api_key": ["hidden-token"]}}', []),
                 ("invalid json", []),
@@ -84,7 +100,7 @@ class ConfigTests(unittest.TestCase):
             self.assertEqual(default.host, "127.0.0.1")
             self.assertEqual(default.router_type, RouterType.auto)
             self.assertEqual(default.history_window, 120)
-            self.assertFalse(default.keepalive)
+            self.assertEqual(default.keepalive_mode, "off")
             self.assertEqual(default.keepalive_max_tokens, 64)
             self.assertFalse(default.auto_unregister)
             self.assertEqual(default.unregister_unavailable_after, 1800)
@@ -92,14 +108,16 @@ class ConfigTests(unittest.TestCase):
             cleanup = self.invoke(["--unregister-unavailable-after", "600"])
             self.assertEqual(cleanup.unregister_unavailable_after, 600)
             self.assertFalse(cleanup.auto_unregister)
-            for flags, expected in [
-                (["--keepalive"], (True, False)),
-                (["--auto-unregister"], (False, True)),
-                (["--keepalive", "--auto-unregister"], (True, True)),
+            for flags, mode, auto_unregister in [
+                (["--keepalive"], "adaptive", False),
+                (["--auto-unregister"], "off", True),
+                (["--keepalive", "--auto-unregister"], "adaptive", True),
+                (["--keepalive-unconditional"], "unconditional", False),
+                (["--keepalive", "--keepalive-unconditional"], "unconditional", False),
             ]:
                 with self.subTest(flags=flags):
                     config = self.invoke(flags)
-                    self.assertEqual((config.keepalive, config.auto_unregister), expected)
+                    self.assertEqual((config.keepalive_mode, config.auto_unregister), (mode, auto_unregister))
 
     def test_router_url_precedence(self):
         cases = [
@@ -145,6 +163,9 @@ class ConfigTests(unittest.TestCase):
                 ["--port", "65536"],
                 ["--interval", "0"],
                 ["--keepalive-concurrency", "0"],
+                ["--keepalive-traffic-poll-interval", "0.05"],
+                ["--keepalive-traffic-poll-interval", "nan"],
+                ["--keepalive-min-tokens", "65"],
                 ["--unregister-unavailable-after", "-1"],
             ]:
                 with self.subTest(args=args):
@@ -178,7 +199,112 @@ class ConfigTests(unittest.TestCase):
         self.assertFalse(settings["dp_aware"])
 
 
+class ApplicationTests(unittest.TestCase):
+    def test_terminal_and_web_run_and_close_the_same_target_services(self):
+        for port in (0, 8899):
+            with self.subTest(port=port):
+                config = MonitorConfig(host="router", web_port=port, interval=0.1, keepalive_unconditional=True)
+                snapshot = {"collected_at": 1, "by_model_stats": {}, "router_type": "sglang"}
+                published, warming, stopped = Event(), Event(), Event()
+                collecting, stopped_during_collection = Event(), Event()
+
+                def collect():
+                    if port and published.is_set():
+                        collecting.set()
+                        if stopped.wait(2):
+                            stopped_during_collection.set()
+                    return snapshot
+
+                def update(data):
+                    self.assertEqual(data, snapshot)
+                    published.set()
+                    if not port:
+                        self.assertTrue(warming.wait(2))
+                        raise KeyboardInterrupt
+
+                def warm(_, stop):
+                    warming.set()
+                    if stop.wait(2):
+                        stopped.set()
+
+                def serve(dashboard, **options):
+                    self.assertEqual(options["port"], port)
+                    self.assertTrue(published.wait(2))
+                    self.assertTrue(warming.wait(2))
+                    with TestClient(dashboard) as client:
+                        self.assertEqual(client.get("/data").json()["collected_at"], 1)
+                        self.assertEqual(client.get("/settings/keepalive").json()["settings"]["mode"], "unconditional")
+                    self.assertTrue(collecting.wait(2))
+
+                with (
+                    patch("router_monitor.target.RouterCollector") as collector,
+                    patch("router_monitor.app.terminal_updates", return_value=nullcontext(update)),
+                    patch.object(KeepaliveWarmer, "run", side_effect=warm, autospec=True) as warmer,
+                    patch("uvicorn.run", side_effect=serve) as web,
+                ):
+                    collector.return_value.collect.side_effect = collect
+                    MonitorApplication({"": config}).run()
+                    self.assertEqual(web.call_count, bool(port))
+                    warmer.assert_called_once()
+                    collector.return_value.close.assert_called_once()
+                    self.assertTrue(stopped.is_set())
+                    if port:
+                        self.assertTrue(stopped_during_collection.is_set())
+
+
 class DashboardTests(unittest.TestCase):
+    def test_keepalive_settings_apply_to_one_router_and_replace_its_warmer(self):
+        target = RouterTarget(MonitorConfig(host="router"))
+        other = RouterTarget(MonitorConfig(host="other"))
+        self.addCleanup(target.keepalive.close)
+        self.addCleanup(other.keepalive.close)
+        app = create_dashboard({"other": other, "router & test": target})
+        sessions = Queue()
+
+        def run(warmer, stop):
+            concurrency = warmer.config.keepalive_total_concurrency
+            sessions.put(("started", concurrency, warmer.config.keepalive_unconditional))
+            stop.wait(5)
+            sessions.put(("stopped", concurrency))
+
+        path = "/settings/keepalive"
+        scope = {"router": "router & test"}
+        with (
+            patch.object(KeepaliveWarmer, "run", new=run),
+            TestClient(app, base_url="http://localhost:8899", client=("127.0.0.1", 50000)) as client,
+        ):
+            initial = client.get(path, params=scope).json()
+            self.assertTrue(initial["editable"])
+            settings = {**initial["settings"], "mode": "unconditional", "keepalive_total_concurrency": 96}
+            response = client.put(path, params=scope, json=settings)
+            self.assertEqual(response.json()["settings"], settings)
+            self.assertEqual(sessions.get(timeout=2), ("started", 96, True))
+            self.assertEqual(client.get(path).json()["settings"]["mode"], "off")
+
+            smaller = {**settings, "mode": "adaptive", "keepalive_total_concurrency": 32}
+            self.assertEqual(client.put(path, params=scope, json=smaller).status_code, 200)
+            self.assertEqual(sessions.get(timeout=2), ("stopped", 96))
+            self.assertEqual(sessions.get(timeout=2), ("started", 32, False))
+            invalid = {**smaller, "keepalive_min_tokens": 100, "keepalive_max_tokens": 64}
+            self.assertEqual(client.put(path, params=scope, json=invalid).status_code, 422)
+            response = client.put(path, params=scope, json=settings, headers={"Origin": "http://other.test"})
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(client.get(path, params=scope).json()["settings"], smaller)
+
+            target.store.publish({"collected_at": 1, "by_model_stats": {}, "router_type": "nginx"})
+            self.assertTrue(client.get(path, params=scope).json()["editable"])
+            self.assertEqual(client.put(path, params=scope, json=settings).status_code, 403)
+            disabled = {**smaller, "mode": "off"}
+            response = client.put(path, params=scope, json=disabled)
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["editable"])
+            self.assertEqual(sessions.get(timeout=2), ("stopped", 32))
+        restarted = create_dashboard({"other": RouterTarget(other.config), "router & test": RouterTarget(target.config)})
+        with TestClient(restarted, base_url="http://monitor.test", client=("192.0.2.5", 50000)) as remote:
+            self.assertFalse(remote.get(path, params=scope).json()["editable"])
+            self.assertEqual(remote.put(path, params=scope, json=settings).status_code, 403)
+            self.assertEqual(remote.get(path, params=scope).json()["settings"], initial["settings"])
+
     def test_named_router_dashboard_isolates_data_history_and_settings(self):
         first = MonitorConfig(host="first", interval=2, history_window=60)
         second = MonitorConfig(host="second", interval=7, history_window=120)
@@ -279,7 +405,7 @@ class DashboardTests(unittest.TestCase):
             template = root / "templates/dashboard.html"
             template.parent.mkdir()
             template.write_text('first {{ interval_ms }} {{ "%g"|format(history_window) }} min')
-            with patch("router_monitor.dashboard.PackageLoader", return_value=FileSystemLoader(template.parent)):
+            with patch("router_monitor.presentation.dashboard.PackageLoader", return_value=FileSystemLoader(template.parent)):
                 app = create_dashboard({"": RouterTarget(config)})
             with TestClient(app) as client:
                 self.assertEqual(client.get("/").text, "first 2000 120 min")

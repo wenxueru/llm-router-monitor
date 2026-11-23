@@ -6,23 +6,25 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-from .config import MonitorConfig
-from .http import HttpClient
-from .maintenance import AutoUnregister
-from .sources import RouterSource, request_metric
-from .visualization import build_visualization
+from ..config import MonitorConfig
+from ..maintenance.registration import AutoUnregister
+from .sources import RouterSource, request_metric, worker_host
+from .summary import summarize_workers
 from .worker import WorkerMetricsCollector
 
 logger = logging.getLogger(__name__)
 
 
 class RouterCollector:
-    def __init__(self, config: MonitorConfig):
+    def __init__(
+        self, config: MonitorConfig, *, source: RouterSource | None = None, worker_metrics: WorkerMetricsCollector | None = None
+    ):
         self.config = config
-        self._http = HttpClient(token=config.api_key, origins=(config.router_url, config.admin_endpoint, config.prom_url))
-        self._source = RouterSource(config, self._http)
+        self._source = source if source is not None else RouterSource(config)
         self._io_pool = ThreadPoolExecutor(max_workers=2)
-        self._worker_metrics = WorkerMetricsCollector(config.interval, config.worker_api_key)
+        self._worker_metrics = (
+            worker_metrics if worker_metrics is not None else WorkerMetricsCollector(config.interval, config.worker_api_key)
+        )
         self._registration = None
         self._previous_requests = None
 
@@ -66,14 +68,15 @@ class RouterCollector:
             total = sum(active.values())
         return rps, age, total
 
-    def _group_by_model(self, workers: list[dict], kind: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    def _group_by_model(self, workers: list[dict], kind: str) -> tuple[dict[str, list[str]], dict[str, str]]:
         by_model: dict[str, list[str]] = defaultdict(list)
-        observed: dict[str, list[str]] = defaultdict(list)
+        observed: dict[str, str] = {}
         sglang = kind == "sglang"
+        refresh = sglang and self.config.auto_unregister
         hosts = {}
         registered_models: dict[str, set[str]] = defaultdict(set)
         for worker in workers:
-            url = worker["url"].split("@")[0]
+            url = worker_host(worker["url"])
             if worker.get("is_healthy") is not False:
                 hosts[url] = worker
             registered = worker.get("model_id")
@@ -82,28 +85,26 @@ class RouterCollector:
         for url, worker in hosts.items():
             model = None if sglang else worker.get("model_id")
             if not model:
-                try:
-                    model = self._worker_metrics.get_model(url, refresh=sglang and self.config.auto_unregister)
-                except Exception:
+                model = self._worker_metrics.get_model(url, refresh=refresh)
+                if model is None:
                     names = registered_models[url]
                     model = next(iter(names)) if len(names) == 1 else "unknown"
-                    logger.warning("Failed to identify model for %s; using %s", url, model, exc_info=True)
-                else:
-                    if sglang and self.config.auto_unregister:
-                        observed[model].append(url)
+                    logger.warning("Failed to identify model for %s; using %s", url, model)
+                elif refresh and model != "unknown":
+                    observed[url] = model
             by_model[model].append(url)
         # Registry fallback labels metrics without proving a serving-model mismatch.
         return by_model, observed
 
     def collect(self) -> dict:
         prometheus_future = self._io_pool.submit(self._source.read_metrics)
-        registry_future = self._io_pool.submit(self._http.fetch, f"{self.config.router_url}/workers")
+        registry_future = self._io_pool.submit(self._source.read_workers)
         samples, raw_registry = prometheus_future.result(), registry_future.result()
         registry = self._source.registry(raw_registry, samples)
         active = defaultdict(float)
         for worker in registry.workers:
             if worker.get("load") is not None:
-                active[worker["url"].split("@")[0]] += worker["load"]
+                active[worker_host(worker["url"])] += worker["load"]
         by_model, observed_models = self._group_by_model(registry.workers, registry.kind)
         if registry.kind == "sglang" and registry.available:
             if self._registration is None and (self.config.auto_unregister or self.config.unregister_unavailable_after > 0):
@@ -162,7 +163,7 @@ class RouterCollector:
             "age": age,
             "prom_ok": bool(samples),
         }
-        snapshot.update(build_visualization(snapshot, registry.workers))
+        snapshot.update(summarize_workers(snapshot, registry.workers))
         return snapshot
 
     def close(self) -> None:
@@ -170,4 +171,4 @@ class RouterCollector:
         self._worker_metrics.close()
         if self._registration is not None:
             self._registration.close()
-        self._http.close()
+        self._source.close()

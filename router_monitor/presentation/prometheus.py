@@ -7,8 +7,8 @@ import httpx
 from prometheus_client import CollectorRegistry
 from prometheus_client.core import GaugeMetricFamily
 
-from .config import PrometheusHistoryConfig
-from .state import RouterTarget
+from ..config import PrometheusHistoryConfig
+from ..state import SnapshotStore
 
 _MODEL_PREFIX = "router_monitor_model_"
 _SAMPLE = "router_monitor_sample"
@@ -33,16 +33,16 @@ _TREND_KEYS = (
 
 
 class MonitorMetrics:
-    def __init__(self, targets: dict[str, RouterTarget]):
-        self.targets = targets
+    def __init__(self, stores: dict[str, SnapshotStore]):
+        self.stores = stores
 
     def collect(self):
         samples = GaugeMetricFamily(_SAMPLE, "A completed monitor collection", labels=["router"])
         metrics = {
             key: GaugeMetricFamily(_MODEL_PREFIX + key, f"Model {key}", labels=["router", "model"]) for key in _TREND_KEYS
         }
-        for router, target in self.targets.items():
-            point = target.store.latest_sample()
+        for router, store in self.stores.items():
+            point = store.latest_sample()
             if point is None:
                 continue
             at = point["at"]
@@ -56,9 +56,9 @@ class MonitorMetrics:
         yield from metrics.values()
 
 
-def metrics_registry(targets: dict[str, RouterTarget]) -> CollectorRegistry:
+def metrics_registry(stores: dict[str, SnapshotStore]) -> CollectorRegistry:
     registry = CollectorRegistry()
-    registry.register(MonitorMetrics(targets))
+    registry.register(MonitorMetrics(stores))
     return registry
 
 
