@@ -4,41 +4,37 @@
 
 English | [简体中文](https://github.com/wenxueru/llm-router-monitor/blob/main/README.zh-CN.md)
 
-Monitor LLM Routers and inference workers from one dashboard.
-
-- Automatic Router detection, named Router switching, and worker grouping by model.
-- 15 per-model trend charts, rank details, and health reasons.
-- English/Chinese, light/dark themes, and a self-contained HTML interface.
+Monitor LLM Routers and inference workers. View inference metrics, rank details, and health by model.
 
 ![Dashboard — anonymized data](https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/dashboard.jpg)
 
 ## Install and run
 
-Python 3.10+:
+Requires Python 3.10 or later.
 
 ```bash
 python -m pip install llm-router-monitor
 rmon http://127.0.0.1:4000
 ```
 
-Open [localhost:8899](http://localhost:8899/). `llm-router-monitor` is equivalent to `rmon`; all options are listed in `rmon --help`.
+`llm-router-monitor` is an alias for `rmon`. Run `rmon --help` to list options. Open the dashboard at [localhost:8899](http://localhost:8899/).
 
 | Option | Purpose |
 | --- | --- |
 | `--router-config FILE` | JSON configuration of named Routers |
 | `--metrics-url URL` | Prometheus or NGINX `stub_status` endpoint |
 | `--admin-url URL` | Separate admin endpoint |
-| `--worker URL` | Add a worker; repeat for multiple endpoints |
+| `--worker URL` | Add a worker. Repeat for multiple endpoints |
 | `--router-type TYPE` | Override automatic detection |
-| `--web-port PORT` | Dashboard port; default `8899`, `0` for terminal only |
-| `--interval SECONDS` | Collection interval; default `2` |
-| `--history-window MINUTES` | Initial chart window on each page load; default `120` (2 hours) |
+| `--web-port PORT` | Dashboard port. Default `8899`. Use `0` for terminal only |
+| `--interval SECONDS` | Collection interval. Default `2` |
+| `--history-window MINUTES` | Initial chart window. Default `120` |
 
 The dashboard binds to `0.0.0.0`. Set `ROUTER_API_KEY` for Router authentication and `WORKER_API_KEY` for worker authentication. The positional URL takes precedence over `--router-url` and `ROUTER_URL`.
 
 ## Multiple Routers
 
-Save a JSON object keyed by display name, for example `routers.local.json`:
+Save the Router configuration in `routers.local.json` using dashboard display names as keys.
 
 ```json
 {
@@ -60,35 +56,35 @@ Save a JSON object keyed by display name, for example `routers.local.json`:
 rmon --router-config routers.local.json --web-port 8899 --history-window 120
 ```
 
-- Each target requires an HTTP(S) `endpoint` without embedded credentials. Optional fields: `router_type`, `worker_urls`, `metrics_endpoint`, `admin_url`, `api_key`, `worker_api_key`, and `interval`.
-- JSON supplies each target's startup configuration. `--web-port`, `--history-window`, and `--history-prometheus-*` settings are shared. The web port must be nonzero.
-- Switch targets in the dashboard; each has independent collection and history. `/`, `/data`, and `/history` accept `?router=NAME` and default to the first target.
-- Maintenance defaults to off in JSON mode. Enable `keepalive`, `keepalive_unconditional`, `auto_unregister`, or a positive `unregister_unavailable_after` per target.
-- Keep local configuration outside Git. Use `api_key` for Router credentials and `worker_api_key` for worker credentials.
+- Set an HTTP(S) `endpoint` for each target. Supply Router and worker credentials in `api_key` and `worker_api_key`. Other optional fields include `router_type`, `worker_urls`, `metrics_endpoint`, `admin_url`, and `interval`.
+- Targets share the web port, initial history window, and Prometheus history configuration. Enable the web port for multiple Routers.
+- Each target has its own collection loop. Select a target in the dashboard or pass `?router=NAME` to `/`, `/data`, or `/history`. The first target is the default.
+- Maintenance defaults to off. Configure `keepalive`, `keepalive_unconditional`, `auto_unregister`, or `unregister_unavailable_after` per target. See [SGLang worker maintenance](#sglang-worker-maintenance).
+- Git ignores `routers.local.json`.
 
 ## Supported Routers
 
-Enable the Router's metrics endpoint or exporter before connecting.
+Enable the Router's metrics endpoint or exporter for collection.
 
 | Router | Discovery and metrics |
 | --- | --- |
-| SGLang | `/workers`; rank health, load, and inference metrics |
+| SGLang | `/workers` provides registration, rank health, and load. Inference metrics come from workers |
 | vLLM Production Stack | Worker discovery from Router metric labels |
 | Standalone vLLM | Direct engine metrics |
-| [LiteLLM](https://docs.litellm.ai/docs/proxy/prometheus) | `/model/info` and deployment metrics; enable the Prometheus callback |
+| [LiteLLM](https://docs.litellm.ai/docs/proxy/prometheus) | `/model/info` and deployment metrics. Enable the Prometheus callback |
 | NVIDIA Dynamo | Model deployments and frontend metrics |
 | Envoy | Admin `/clusters?format=json` and upstream metrics |
 | NGINX Plus | Upstreams exposed by the Prometheus exporter |
 | Traefik | Upstreams exposed by enabled health checks |
-| NGINX OSS | Native `stub_status` request totals or exporter metrics; configure engines with `--worker` |
-| HAProxy, Kong, Ray Serve | Proxy metrics; configure engines with `--worker` |
+| NGINX OSS | `stub_status` request totals or exporter metrics. Configure engines with `--worker` |
+| HAProxy, Kong, Ray Serve | Proxy metrics. Configure engines with `--worker` |
 | Other proxies | Configure SGLang/vLLM engines with `--worker` |
 
-For native NGINX `stub_status`, set `metrics_endpoint` in JSON or pass `--metrics-url` in single-Router mode. It supplies request-rate counters, not inference metrics.
+To measure request rates with `stub_status`, set `metrics_endpoint` in JSON or pass `--metrics-url` in single-Router mode. Use `worker_urls` or `--worker` to collect inference metrics from engines.
 
-Envoy and bare NGINX Plus addresses are discovered as HTTP endpoints. Use `--worker` for HTTPS or custom paths.
+Monitor uses HTTP for host addresses discovered through Envoy and NGINX Plus. Use `--worker` to specify HTTPS addresses or custom paths.
 
-Envoy with a separate admin listener:
+Monitor Envoy through its separate admin port.
 
 ```bash
 rmon http://127.0.0.1:8080 \
@@ -96,7 +92,7 @@ rmon http://127.0.0.1:8080 \
   --metrics-url http://127.0.0.1:9901/stats/prometheus
 ```
 
-Exporter with explicit workers:
+Collect Router metrics from an exporter and specify worker addresses.
 
 ```bash
 rmon http://127.0.0.1:8080 \
@@ -106,20 +102,20 @@ rmon http://127.0.0.1:8080 \
 
 ## Reading the dashboard
 
-- Each chart shows models with observations for that metric in the selected time window. Zero is a valid observation; a missing value is not. “Unknown model” means model discovery failed, and remains visible when metrics are available.
-- Trends use thin lines; zoom in to inspect dense observations. Zoom stays synchronized across charts. Use the legend to hide or show a model.
-- Missing values remain missing. TTFT/ITL connect valid observations; other charts bridge gaps up to 30 seconds with dashed lines. Collection outages and unavailable models stay disconnected.
-- Axes adapt to the data: nonnegative values, percentages within 0–100%, and integer count ticks.
-- Close a warning banner with × for its current occurrence on this page. A changed warning, recurrence after recovery, or page reload shows it again. The top status indicator stays visible.
+- Charts include models with observations in the selected window, including zeros. Zoom is synchronized across charts. Select a legend entry to toggle a model.
+- TTFT and ITL charts connect valid observations. Other charts use dashed lines across missing intervals of up to 30 seconds. Lines break during collection outages or model unavailability.
+- Select × to dismiss the current warning. It returns when the warning changes, the condition recurs, or the page reloads.
 
 ### Metrics and history
 
-- TTFT/ITL use count-weighted counter deltas; cache hit uses a 60-second token-weighted window.
-- If a worker model lookup fails, the dashboard uses the single known model name shared by its managed Router registrations. Missing or conflicting names leave the worker under “Unknown model”. Only a successful worker lookup can establish a model mismatch.
-- Each page load uses the server's configured window: 2 hours by default, starting no earlier than available data. Window adjustments apply only to the current page.
-- History is in memory by default. Set up [Prometheus history](#prometheus-history) to preserve scraped samples across restarts.
-- **Settings → Display** controls the history window, refresh interval, language, and theme. The browser remembers the last three.
-- Open **Settings → Keepalive** on a local or port-forwarded dashboard. **Apply** replaces the selected Router's running keepalive settings. Restarting the Monitor reloads its startup configuration.
+- TTFT and ITL means are weighted by observation counts from counter deltas. Cache hit rate is weighted by token counts over 60 seconds.
+- If a worker model lookup fails, the dashboard uses the single known model name in its managed Router registrations. For missing or conflicting names, available metrics appear under “Unknown model”.
+- History is stored in memory by default. Configure [Prometheus history](#prometheus-history) to query scraped samples across restarts.
+
+### Dashboard settings
+
+- **Display** controls the history window, refresh interval, language, and theme. The history window applies to the current page. The browser saves the other settings.
+- **Keepalive** is editable on a local or port-forwarded dashboard. **Apply** updates the selected Router's running configuration. Monitor loads its startup configuration on restart.
 
 ![Per-model trends — anonymized data](https://raw.githubusercontent.com/wenxueru/llm-router-monitor/main/docs/images/trends.jpg)
 
@@ -131,7 +127,7 @@ rmon http://127.0.0.1:8080 \
 
 ## Prometheus history
 
-Monitor exposes timestamped model metrics at `/metrics`. Add one scrape job for this monitor in Prometheus:
+Assign each Monitor a separate Prometheus scrape job. `/metrics` provides model metrics with collection timestamps.
 
 ```yaml
 scrape_configs:
@@ -142,7 +138,7 @@ scrape_configs:
       - targets: ["monitor.example:8899"]
 ```
 
-Use a scrape interval no longer than the shortest target collection interval, with `honor_timestamps` enabled. Assign each monitor a separate job name.
+Enable `honor_timestamps` and set the scrape interval to the shortest target collection interval or less.
 
 ```bash
 rmon http://router.example:2730 \
@@ -151,15 +147,14 @@ rmon http://router.example:2730 \
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `--history-prometheus-url` | Unset | Prometheus base URL; enables stored history |
-| `--history-prometheus-job` | `router-monitor` | Scrape job for this monitor |
+| `--history-prometheus-url` | Unset | Prometheus base URL for history queries |
+| `--history-prometheus-job` | `router-monitor` | Prometheus scrape job name |
 | `--history-prometheus-lookback-hours` | `24` | Maximum history query window in hours |
 
-The initial page window remains 120 minutes. These options also apply with `--router-config` and require a nonzero web port.
+These options require an enabled web port and apply to both single-Router and multi-Router configurations.
 
-- Prometheus retention determines how long scraped samples remain available. The dashboard merges them with recent local observations to include data collected since the latest scrape.
-- Grafana or PromQL can query the same series, for example `router_monitor_model_tps{job="router-monitor"}`. Use the `router` and `model` labels for filtering.
-- Without a Prometheus URL, history stays in memory until restart. When configured, a failed history query returns an error; live data continues through `/data`.
+- `/history` merges Prometheus samples with recent local data. Prometheus retention controls how long scraped samples stay available. A failed history query returns `503`.
+- Filter the metrics by `router` and `model` in Grafana or PromQL. For example, query `router_monitor_model_tps{job="router-monitor"}`.
 
 ## SGLang worker maintenance
 
@@ -170,22 +165,22 @@ Keepalive is off by default. Choose a mode in the dashboard or at startup.
 | Mode | Option | Scheduling |
 | --- | --- | --- |
 | Adaptive | `--keepalive` | Warm idle workers in rounds. Inference traffic cancels keepalive. Resume after five quiet seconds once workers are idle. |
-| Unconditional | `--keepalive-unconditional` | Refill each successful request immediately, including during inference traffic. Target workers with a known model. |
+| Unconditional | `--keepalive-unconditional` | Send requests to workers with a known model. Start a replacement after each success, including during inference traffic. |
 
 ```bash
 rmon http://127.0.0.1:2730 --keepalive-unconditional
 ```
 
 - Set `"keepalive": true` or `"keepalive_unconditional": true` on a named Router to select its mode.
-- Both modes cap concurrency at the lower of the Router limit and the eligible worker count × the per-worker limit.
-- Adaptive mode starts its interval after a round finishes and backs off on failures. Missing Router metrics or stale worker observations pause dispatch.
-- To inspect a running scheduler, read `keepalive` in `/data` for state, in-flight requests, dispatches, and cancellations.
+- `--keepalive-concurrency` caps requests per worker. Three eligible workers with a limit of eight can run up to 24 concurrent keepalive requests.
+- Monitor accepts and ignores the legacy `--keepalive-total-concurrency` option and `keepalive_total_concurrency` JSON field.
+- Adaptive mode pauses when Router metrics are missing or worker observations are stale. Failed rounds use exponential backoff.
+- The `keepalive` field in `/data` reports status, in-flight requests, dispatches, and cancellations.
 
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `--keepalive-concurrency` | `8` | Concurrent requests per worker |
-| `--keepalive-total-concurrency` | `32` | Concurrent keepalive requests across a Router |
-| `--keepalive-interval` | `5` | Seconds between adaptive rounds or before retrying a failed unconditional request |
+| `--keepalive-interval` | `5` | Delay in seconds after an adaptive round or a failed unconditional request |
 | `--keepalive-traffic-poll-interval` | `1` | Seconds between adaptive mode traffic polls |
 | `--keepalive-max-interval` | `60` | Adaptive mode's maximum retry delay in seconds |
 | `--keepalive-prompt-words` | `512` | Synthetic context word limit, with random lengths from one eighth to the limit |
@@ -196,9 +191,9 @@ Random length and budget lower bounds round down and use a minimum of 1. Use `--
 
 ### Registration cleanup
 
-- `--auto-unregister` removes registrations when a worker reports a different model. It defaults to off.
-- `--unregister-unavailable-after` sets the grace period. Cleanup requires all ranks to stay unhealthy and idle and a final probe to fail. The single-Router default is 1,800 seconds. Use `0` to turn off unavailable cleanup.
-- The final probe recognizes connection failures, connection or read timeouts, and remote protocol errors. Recovery, re-registration, or missing registry observations reset the timer. Cleanup removes Router registrations.
+- `--auto-unregister` compares the model reported by a worker with its registered model and removes mismatched registrations. It defaults to off.
+- `--unregister-unavailable-after` sets the grace period. Monitor unregisters a worker when all ranks remain unhealthy and idle through the grace period and the final probe confirms unavailability. The single-Router default is `1800` seconds. Use `0` to disable this cleanup.
+- Connection failures, connection or read timeouts, and remote protocol errors qualify as probe failures. Worker recovery, re-registration, or failed registry collection resets the timer.
 
 Run `bash scripts/router.sh` with a compatible `sglang_router` runtime exposing `RouterArgs` to start a local SGLang Router. The default API port is `2730` and the metrics port is `29000`.
 
@@ -206,7 +201,7 @@ Run `bash scripts/router.sh` with a compatible `sglang_router` runtime exposing 
 
 See [Architecture](docs/architecture.md) for module boundaries, data flow, and Router isolation.
 
-Shell entries live in `scripts/`; behavioral tests live in `tests/`. Frontend tests require Node.js.
+Frontend tests require Node.js.
 
 ```bash
 python -m pip install -e '.[dev]'

@@ -255,7 +255,7 @@ assert.deepEqual(Object.keys(context).sort(), initialGlobals);
 fixture.keepalive = {editable: true, supported: true, models: ['model-a'], settings: {
   mode: 'adaptive', keepalive_model: '', keepalive_interval: 2, keepalive_max_interval: 60,
   keepalive_traffic_poll_interval: 0.25, keepalive_min_tokens: 0, keepalive_max_tokens: 4096,
-  keepalive_concurrency: 48, keepalive_total_concurrency: 96, keepalive_prompt_words: 4096,
+  keepalive_concurrency: 48, keepalive_prompt_words: 4096,
 }};
 assert.equal(fixture.requests.includes('/settings/keepalive'), false);
 $('settings-toggle').trigger('click');
@@ -281,9 +281,10 @@ assert.match($('keepalive-mode-note').textContent, /during inference/);
 assert.equal($('keepalive-interval-label').textContent, 'Failure retry interval (s)');
 assert.equal($('keepalive-traffic-setting').hidden, true);
 const field = id => allElements().find(element => element.dataset.keepalive === id);
+assert.equal(field('keepalive_total_concurrency'), undefined);
 assert.equal(field('keepalive_traffic_poll_interval').disabled, true);
 field('keepalive_traffic_poll_interval').value = '';
-field('keepalive_total_concurrency').value = '128';
+field('keepalive_concurrency').value = '128';
 await tick();
 $('settings').trigger('click');
 assert.equal($('settings').open, true);
@@ -293,7 +294,7 @@ $('settings').trigger('cancel', cancel);
 assert.equal(cancelled, true);
 $('show-display-settings').trigger('click');
 await $('show-keepalive-settings').trigger('click');
-assert.equal(field('keepalive_total_concurrency').value, '128');
+assert.equal(field('keepalive_concurrency').value, '128');
 assert.equal($('keepalive-model').value, 'model-a');
 assert.equal(fixture.requests.filter(path => path === '/settings/keepalive').length, 1);
 field('keepalive_min_tokens').value = '5000';
@@ -304,7 +305,7 @@ field('keepalive_min_tokens').value = '1024';
 await $('keepalive-settings').trigger('submit');
 assert.equal(fixture.keepalive.settings.mode, 'unconditional');
 assert.equal(fixture.keepalive.settings.keepalive_model, 'model-a');
-assert.equal(fixture.keepalive.settings.keepalive_total_concurrency, 128);
+assert.equal(fixture.keepalive.settings.keepalive_concurrency, 128);
 assert.equal(fixture.keepalive.settings.keepalive_traffic_poll_interval, 0.25);
 assert.equal($('keepalive-feedback').textContent, 'Saved for this Router.');
 assert.equal($('settings').open, true);

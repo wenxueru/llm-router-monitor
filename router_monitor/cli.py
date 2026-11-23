@@ -153,15 +153,9 @@ def monitor(
             rich_help_panel="Keepalive tuning",
         ),
     ] = MonitorConfig.keepalive_concurrency,
-    keepalive_total_concurrency: Annotated[
-        int,
-        typer.Option(
-            envvar="KEEPALIVE_TOTAL_CONCURRENCY",
-            min=1,
-            help="Maximum concurrent keepalive requests across a Router's workers.",
-            rich_help_panel="Keepalive tuning",
-        ),
-    ] = MonitorConfig.keepalive_total_concurrency,
+    _legacy_keepalive_total_concurrency: Annotated[
+        int | None, typer.Option("--keepalive-total-concurrency", hidden=True)
+    ] = None,
     keepalive_prompt_words: Annotated[
         int,
         typer.Option(
@@ -223,7 +217,6 @@ def monitor(
                 keepalive_min_tokens=keepalive_min_tokens,
                 keepalive_max_tokens=keepalive_max_tokens,
                 keepalive_concurrency=keepalive_concurrency,
-                keepalive_total_concurrency=keepalive_total_concurrency,
                 keepalive_prompt_words=keepalive_prompt_words,
             )
         except ValueError as error:

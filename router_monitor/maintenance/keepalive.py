@@ -174,13 +174,11 @@ class KeepaliveWarmer:
             for url in urls
             if idle is None or url in idle
         ]
-        if self.config.keepalive_unconditional:
-            workers.sort()
-        count = min(self.config.keepalive_total_concurrency, len(workers) * self.config.keepalive_concurrency)
-        for index in range(count):
-            slot, worker = divmod(index, len(workers))
-            url, model = workers[worker]
-            yield url, model, slot
+        if not workers:
+            return
+        for slot in range(self.config.keepalive_concurrency):
+            for url, model in workers:
+                yield url, model, slot
 
     def run(self, stop: threading.Event) -> None:
         if self.config.keepalive_unconditional:
@@ -194,7 +192,7 @@ class KeepaliveWarmer:
 
     async def _run(self, stop: threading.Event, read_requests: Callable[[], float | None] | None = None) -> None:
         headers = {"Authorization": f"Bearer {self.config.worker_api_key}"} if self.config.worker_api_key else None
-        limits = httpx.Limits(max_connections=self.config.keepalive_total_concurrency)
+        limits = httpx.Limits(max_connections=None, max_keepalive_connections=20)
         async with httpx.AsyncClient(headers=headers, limits=limits, follow_redirects=True) as client:
             if read_requests is None:
                 await self._maintain_concurrency(client, stop)

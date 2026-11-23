@@ -65,8 +65,8 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         await asyncio.wait_for(_wait_for_poll(stop, time.monotonic() + 60), timeout=1)
         self.assertTrue(stop.is_set())
 
-    def test_fleet_eligibility_and_round_budget(self):
-        config = MonitorConfig(host="router", keepalive_model="chosen", keepalive_concurrency=3, keepalive_total_concurrency=5)
+    def test_adaptive_uses_per_worker_budget_for_eligible_workers(self):
+        config = MonitorConfig(host="router", keepalive_model="chosen", keepalive_concurrency=3)
         store = SnapshotStore()
         warmer = KeepaliveWarmer(config, store)
         snapshot = {
@@ -83,9 +83,13 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
                 ("first", "chosen", 1),
                 ("second", "chosen", 1),
                 ("first", "chosen", 2),
+                ("second", "chosen", 2),
             ],
         )
         snapshot["worker_rows"][-1]["waiting"] = 1
+        self.assertEqual(list(warmer.request_slots(snapshot)), [])
+        snapshot["worker_rows"][-1]["waiting"] = 0
+        snapshot["by_model"] = {"other": ["other"]}
         self.assertEqual(list(warmer.request_slots(snapshot)), [])
 
     async def test_worker_payload_and_adaptive_round_backoff(self):
@@ -129,9 +133,10 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
             patch(
                 "router_monitor.maintenance.keepalive.httpx.AsyncClient",
                 side_effect=lambda **kwargs: client_class(**kwargs, transport=httpx.MockTransport(worker)),
-            ),
+            ) as create_client,
         ):
             await asyncio.wait_for(warmer._run(stop, lambda: 0), 3)
+        self.assertIsNone(create_client.call_args.kwargs["limits"].max_connections)
         self.assertEqual(len(attempts), 4)
         first, second, third = (b - a for a, b in zip(attempts, attempts[1:]))
         self.assertGreater(second, first)
@@ -142,7 +147,6 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
             host="router",
             keepalive_unconditional=True,
             keepalive_interval=0.5,
-            keepalive_total_concurrency=3,
             keepalive_concurrency=2,
         )
         store = SnapshotStore()
@@ -169,16 +173,16 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
             try:
                 first = []
                 second = []
-                for _ in range(3):
+                for _ in range(4):
                     host, finished = await asyncio.wait_for(opened.get(), 2)
                     (first if host == "first" else second).append(finished)
-                self.assertEqual((len(first), len(second)), (2, 1))
+                self.assertEqual((len(first), len(second)), (2, 2))
 
                 publish_workers(store, ["http://second", "http://first"], running=10)
                 second[0].set_result(True)
                 replacement = await next_request("second")
                 self.assertTrue(all(not request.done() for request in first))
-                self.assertEqual(store.snapshot()["keepalive"]["inflight"], 3)
+                self.assertEqual(store.snapshot()["keepalive"]["inflight"], 4)
 
                 failed_at = loop.time()
                 first[0].set_result(False)
@@ -187,14 +191,15 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
                 retried = await next_request("first")
                 self.assertGreaterEqual(loop.time() - failed_at, config.keepalive_interval)
 
-                publish_workers(store, ["http://second"], running=10)
-                added = await next_request("second")
+                publish_workers(store, ["http://second", "http://third"], running=10)
+                added = [await next_request("third"), await next_request("third")]
                 self.assertTrue(first[1].cancelled() and retried.cancelled())
-                self.assertEqual(store.snapshot()["keepalive"]["inflight"], 2)
+                self.assertFalse(replacement.done() or second[1].done())
+                self.assertEqual(store.snapshot()["keepalive"]["inflight"], 4)
             finally:
                 stop.set()
                 await asyncio.wait_for(task, 2)
-        self.assertTrue(replacement.cancelled() and added.cancelled())
+        self.assertTrue(all(request.cancelled() for request in [replacement, second[1], *added]))
 
     async def test_adaptive_cancellation_resume_and_hot_update(self):
         opened = closed = 0
@@ -246,8 +251,7 @@ class KeepaliveTests(unittest.IsolatedAsyncioTestCase):
         config = MonitorConfig(
             host="router",
             keepalive=True,
-            keepalive_concurrency=3,
-            keepalive_total_concurrency=2,
+            keepalive_concurrency=2,
             keepalive_traffic_poll_interval=0.1,
         )
         server = await asyncio.start_server(stream, "127.0.0.1", 0)

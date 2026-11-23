@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import httpx
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, TypeAdapter, model_validator
 from typing_extensions import Required, TypedDict
 
 
@@ -52,7 +52,6 @@ class MonitorConfig:
     keepalive_min_tokens: int = 0
     keepalive_max_tokens: int = 64
     keepalive_concurrency: int = 8
-    keepalive_total_concurrency: int = 32
     keepalive_prompt_words: int = 512
 
     def __post_init__(self) -> None:
@@ -128,8 +127,15 @@ class KeepaliveSettings(BaseModel):
     keepalive_min_tokens: NonNegativeInt
     keepalive_max_tokens: PositiveInt
     keepalive_concurrency: PositiveInt
-    keepalive_total_concurrency: PositiveInt
     keepalive_prompt_words: PositiveInt
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_legacy_total_concurrency(cls, values: object) -> object:
+        if isinstance(values, dict) and "keepalive_total_concurrency" in values:
+            values = values.copy()
+            values.pop("keepalive_total_concurrency")
+        return values
 
     @classmethod
     def from_config(cls, config: MonitorConfig) -> "KeepaliveSettings":
@@ -178,6 +184,7 @@ def load_router_configs(path: Path, *, history_window: float, web_port: int) -> 
     configs = {}
     for name, settings in entries.items():
         worker_urls = tuple(url.rstrip("/") for url in settings.pop("worker_urls", ()))
+        settings.pop("keepalive_total_concurrency", None)
         settings.setdefault("unregister_unavailable_after", 0)
         try:
             configs[name] = MonitorConfig(

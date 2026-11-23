@@ -274,6 +274,7 @@
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 10px 12px;
       }
+      .settings-grid-wide { grid-column: 1 / -1; }
       .settings-fields h3 { margin: 0 0 8px; }
       .settings-fields label {
         display: grid;
@@ -764,9 +765,7 @@
             <section aria-labelledby="keepalive-limits">
               <h3 id="keepalive-limits" data-i18n="Request limits">Request limits</h3>
               <div class="settings-grid">
-                <label><span data-i18n="Total concurrency">Total concurrency</span>
-                  <input type="number" min="1" step="1" required data-keepalive="keepalive_total_concurrency" /></label>
-                <label><span data-i18n="Per-worker concurrency">Per-worker concurrency</span>
+                <label class="settings-grid-wide"><span data-i18n="Per-worker concurrency">Per-worker concurrency</span>
                   <input type="number" min="1" step="1" required data-keepalive="keepalive_concurrency" /></label>
                 <label><span data-i18n="Minimum output tokens">Minimum output tokens</span>
                   <input type="number" min="0" step="1" required data-keepalive="keepalive_min_tokens" /></label>
@@ -1295,7 +1294,6 @@ var po={},fo={};var go,vo=function(){function t(t,e,n){var i=this;this._sleepAft
           Adaptive: "自适应",
           Unconditional: "无条件",
           "Request limits": "请求上限",
-          "Total concurrency": "总并发",
           "Per-worker concurrency": "单 Worker 并发上限",
           "Minimum output tokens": "最少生成 Token",
           "Maximum output tokens": "最多生成 Token",

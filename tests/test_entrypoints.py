@@ -47,6 +47,8 @@ class ConfigTests(unittest.TestCase):
                     "keepalive_unconditional": True,
                     "keepalive_min_tokens": 32,
                     "keepalive_traffic_poll_interval": 0.25,
+                    "keepalive_concurrency": 20,
+                    "keepalive_total_concurrency": 1,
                 },
                 "proxy": {"endpoint": "http://proxy:8080", "router_type": "nginx", "worker_urls": ["http://worker/"]},
             }
@@ -62,6 +64,7 @@ class ConfigTests(unittest.TestCase):
                 self.assertTrue(targets["inference"].keepalive_unconditional)
                 self.assertEqual(targets["inference"].keepalive_min_tokens, 32)
                 self.assertEqual(targets["inference"].keepalive_traffic_poll_interval, 0.25)
+                self.assertEqual(targets["inference"].keepalive_concurrency, 20)
                 self.assertEqual(targets["proxy"].router_type, RouterType.nginx)
                 self.assertEqual(targets["proxy"].worker_urls, ("http://worker",))
                 for target in targets.values():
@@ -90,11 +93,23 @@ class ConfigTests(unittest.TestCase):
 
     def test_environment_defaults_and_cli_overrides(self):
         with patch.dict(os.environ, {"PROM_PORT": "30000", "INTERVAL": "5", "KEEPALIVE_MAX_TOKENS": "128"}, clear=True):
-            config = self.invoke(["--host", "192.0.2.1", "--interval", "1", "--keepalive-max-tokens", "256"])
+            config = self.invoke([
+                "--host",
+                "192.0.2.1",
+                "--interval",
+                "1",
+                "--keepalive-max-tokens",
+                "256",
+                "--keepalive-concurrency",
+                "16",
+                "--keepalive-total-concurrency",
+                "1",
+            ])
         self.assertEqual(config.prom_port, 30000)
         self.assertEqual(config.interval, 1)
         self.assertEqual(config.host, "192.0.2.1")
         self.assertEqual(config.keepalive_max_tokens, 256)
+        self.assertEqual(config.keepalive_concurrency, 16)
         with patch.dict(os.environ, {}, clear=True):
             default = self.invoke()
             self.assertEqual(default.host, "127.0.0.1")
@@ -262,7 +277,7 @@ class DashboardTests(unittest.TestCase):
         sessions = Queue()
 
         def run(warmer, stop):
-            concurrency = warmer.config.keepalive_total_concurrency
+            concurrency = warmer.config.keepalive_concurrency
             sessions.put(("started", concurrency, warmer.config.keepalive_unconditional))
             stop.wait(5)
             sessions.put(("stopped", concurrency))
@@ -275,13 +290,14 @@ class DashboardTests(unittest.TestCase):
         ):
             initial = client.get(path, params=scope).json()
             self.assertTrue(initial["editable"])
-            settings = {**initial["settings"], "mode": "unconditional", "keepalive_total_concurrency": 96}
-            response = client.put(path, params=scope, json=settings)
+            self.assertNotIn("keepalive_total_concurrency", initial["settings"])
+            settings = {**initial["settings"], "mode": "unconditional", "keepalive_concurrency": 96}
+            response = client.put(path, params=scope, json={**settings, "keepalive_total_concurrency": 1})
             self.assertEqual(response.json()["settings"], settings)
             self.assertEqual(sessions.get(timeout=2), ("started", 96, True))
             self.assertEqual(client.get(path).json()["settings"]["mode"], "off")
 
-            smaller = {**settings, "mode": "adaptive", "keepalive_total_concurrency": 32}
+            smaller = {**settings, "mode": "adaptive", "keepalive_concurrency": 32}
             self.assertEqual(client.put(path, params=scope, json=smaller).status_code, 200)
             self.assertEqual(sessions.get(timeout=2), ("stopped", 96))
             self.assertEqual(sessions.get(timeout=2), ("started", 32, False))
